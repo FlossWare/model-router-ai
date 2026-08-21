@@ -76,6 +76,10 @@ class ProviderRouter:
             elif isinstance(result, list):
                 self._models.extend(result)
 
+        if not self._models:
+            logger.warning("No models discovered from any provider")
+            return
+
         self._initialized = True
         providers = {m.provider for m in self._models}
         logger.info(

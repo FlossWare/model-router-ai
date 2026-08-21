@@ -1,0 +1,145 @@
+name: Code Quality
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Lint (Ruff)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Ruff
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+
+      - name: Ruff Check
+        run: ruff check model_router_ai/
+
+      - name: Ruff Format Check
+        run: ruff format --check model_router_ai/
+
+  type-check:
+    continue-on-error: true
+    name: Type Check (MyPy)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install mypy
+
+      - name: Run MyPy
+        run: mypy model_router_ai/
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install security tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install bandit[toml] safety
+
+      - name: Run Bandit
+        run: |
+          bandit -r model_router_ai/ -f json -o bandit-report.json || true
+          bandit -r model_router_ai/ -f screen
+
+      - name: Run Safety
+        run: |
+          safety check --json || true
+          safety check
+
+      - name: Upload security report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-report
+          path: bandit-report.json
+          retention-days: 90
+
+  complexity:
+    name: Complexity Analysis
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Radon
+        run: |
+          python -m pip install --upgrade pip
+          pip install radon xenon
+
+      - name: Cyclomatic Complexity
+        run: |
+          echo "=== Cyclomatic Complexity ===" | tee quality-report.txt
+          radon cc model_router_ai/ -a -s | tee -a quality-report.txt
+
+      - name: Maintainability Index
+        run: |
+          echo "" | tee -a quality-report.txt
+          echo "=== Maintainability Index ===" | tee -a quality-report.txt
+          radon mi model_router_ai/ -s | tee -a quality-report.txt
+
+      - name: Raw Metrics
+        run: |
+          echo "" | tee -a quality-report.txt
+          echo "=== Raw Metrics ===" | tee -a quality-report.txt
+          radon raw model_router_ai/ -s | tee -a quality-report.txt
+
+      - name: Check Complexity Thresholds
+        continue-on-error: true
+        run: xenon --max-average B --max-modules B --max-absolute B model_router_ai/
+
+      - name: Upload quality report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: complexity-report
+          path: quality-report.txt
+          retention-days: 90

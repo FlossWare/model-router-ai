@@ -1,0 +1,163 @@
+name: Auto Version
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'tags/**'
+
+permissions:
+  contents: write
+
+jobs:
+  auto-version:
+    name: Automated Versioning
+    runs-on: ubuntu-latest
+
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Get last tag
+        id: get-last-tag
+        run: |
+          LAST_TAG=$(git tag --list "v*" --sort=-version:refname | head -n 1)
+          if [ -z "$LAST_TAG" ]; then
+            LAST_TAG="v0.0"
+          fi
+          echo "last-tag=$LAST_TAG" >> $GITHUB_OUTPUT
+          echo "Last tag: $LAST_TAG"
+
+      - name: Check commits for version-worthy changes
+        id: check-commits
+        run: |
+          LAST_TAG="${{ steps.get-last-tag.outputs.last-tag }}"
+          COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"%s")
+
+          if echo "$COMMITS" | grep -qiE '(^feat:|^Add |^Enhance |BREAKING CHANGE)'; then
+            echo "needs-version=true" >> $GITHUB_OUTPUT
+            echo "Version-worthy changes found"
+          else
+            echo "needs-version=false" >> $GITHUB_OUTPUT
+            echo "No version-worthy changes found"
+          fi
+
+      - name: Determine version bump type
+        id: determine-bump
+        if: steps.check-commits.outputs.needs-version == 'true'
+        run: |
+          LAST_TAG="${{ steps.get-last-tag.outputs.last-tag }}"
+          COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"%s")
+
+          if echo "$COMMITS" | grep -qE 'BREAKING CHANGE'; then
+            echo "bump-type=major" >> $GITHUB_OUTPUT
+            echo "Detected BREAKING CHANGE - major version bump"
+          elif echo "$COMMITS" | grep -qiE '(^feat:|^Add |^Enhance )'; then
+            echo "bump-type=minor" >> $GITHUB_OUTPUT
+            echo "Detected features/additions - minor version bump"
+          else
+            echo "bump-type=none" >> $GITHUB_OUTPUT
+            echo "No version bump needed"
+          fi
+
+      - name: Get current version
+        id: get-current-version
+        if: steps.check-commits.outputs.needs-version == 'true' && steps.determine-bump.outputs.bump-type != 'none'
+        run: |
+          CURRENT_VERSION=$(grep -oP 'version = "\K[0-9]+\.[0-9]+' pyproject.toml | head -1)
+          echo "current-version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $CURRENT_VERSION"
+
+      - name: Calculate new version
+        id: calculate-version
+        if: steps.check-commits.outputs.needs-version == 'true' && steps.determine-bump.outputs.bump-type != 'none'
+        run: |
+          CURRENT="${{ steps.get-current-version.outputs.current-version }}"
+          BUMP_TYPE="${{ steps.determine-bump.outputs.bump-type }}"
+
+          MAJOR=$(echo $CURRENT | cut -d. -f1)
+          MINOR=$(echo $CURRENT | cut -d. -f2)
+
+          if [ "$BUMP_TYPE" = "major" ]; then
+            NEW_MAJOR=$((MAJOR + 1))
+            NEW_VERSION="${NEW_MAJOR}.0"
+          elif [ "$BUMP_TYPE" = "minor" ]; then
+            NEW_MINOR=$((MINOR + 1))
+            NEW_VERSION="${MAJOR}.${NEW_MINOR}"
+          fi
+
+          echo "new-version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "New version: $NEW_VERSION (bump: $BUMP_TYPE)"
+
+      - name: Update version files
+        if: steps.check-commits.outputs.needs-version == 'true' && steps.determine-bump.outputs.bump-type != 'none'
+        run: |
+          NEW_VERSION="${{ steps.calculate-version.outputs.new-version }}"
+
+          sed -i 's/^version = "[0-9]\+\.[0-9]\+"/version = "'"$NEW_VERSION"'"/' pyproject.toml
+          sed -i 's/__version__ = "[0-9]\+\.[0-9]\+"/__version__ = "'"$NEW_VERSION"'"/' model_router_ai/__init__.py
+
+          echo "Updated version to $NEW_VERSION in both files"
+
+      - name: Validate version sync
+        if: steps.check-commits.outputs.needs-version == 'true' && steps.determine-bump.outputs.bump-type != 'none'
+        run: |
+          PYPROJECT_VERSION=$(grep -oP 'version = "\K[0-9]+\.[0-9]+' pyproject.toml | head -1)
+          INIT_VERSION=$(grep -oP '__version__ = "\K[0-9]+\.[0-9]+' model_router_ai/__init__.py)
+
+          echo "pyproject.toml version: $PYPROJECT_VERSION"
+          echo "__init__.py version: $INIT_VERSION"
+
+          if [ "$PYPROJECT_VERSION" != "$INIT_VERSION" ]; then
+            echo "ERROR: Version mismatch between files!"
+            exit 1
+          fi
+
+          echo "Version sync validated: $PYPROJECT_VERSION"
+
+      - name: Commit version changes
+        id: commit-changes
+        if: steps.check-commits.outputs.needs-version == 'true' && steps.determine-bump.outputs.bump-type != 'none'
+        run: |
+          NEW_VERSION="${{ steps.calculate-version.outputs.new-version }}"
+
+          git add pyproject.toml model_router_ai/__init__.py
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            echo "committed=false" >> $GITHUB_OUTPUT
+          else
+            git commit -m "Bump version to $NEW_VERSION [skip ci]"
+            git push origin main
+            echo "committed=true" >> $GITHUB_OUTPUT
+            echo "Committed version bump to $NEW_VERSION"
+          fi
+
+      - name: Create git tag
+        id: create-tag
+        if: steps.check-commits.outputs.needs-version == 'true' && steps.determine-bump.outputs.bump-type != 'none' && steps.commit-changes.outputs.committed == 'true'
+        run: |
+          NEW_VERSION="${{ steps.calculate-version.outputs.new-version }}"
+          TAG_NAME="v$NEW_VERSION"
+
+          git tag -a "$TAG_NAME" -m "Release version $NEW_VERSION"
+          echo "tag-name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "Created tag: $TAG_NAME"
+
+      - name: Push tag
+        if: steps.check-commits.outputs.needs-version == 'true' && steps.determine-bump.outputs.bump-type != 'none' && steps.commit-changes.outputs.committed == 'true'
+        run: |
+          TAG_NAME="${{ steps.create-tag.outputs.tag-name }}"
+          git push origin "$TAG_NAME"
+          echo "Pushed tag: $TAG_NAME (this will trigger GitHub release creation)"

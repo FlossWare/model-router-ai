@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "model-router-ai"
-version = "0.1.0"
+version = "0.1"
 description = "Decorator-based LLM model router with cost-aware, budget-tracking, and policy-enforcing composable layers"
 readme = "README.md"
 license = {text = "MIT"}
@@ -21,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
@@ -29,9 +30,26 @@ Homepage = "https://github.com/FlossWare/model-router-ai"
 Repository = "https://github.com/FlossWare/model-router-ai"
 Issues = "https://github.com/FlossWare/model-router-ai/issues"
 
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "mypy", "bandit"]
+
 [tool.setuptools.packages.find]
 include = ["model_router_ai*"]
 
+[tool.ruff]
+target-version = "py311"
+line-length = 99
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.bandit]
+exclude_dirs = ["tests"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-asyncio_mode = "auto"

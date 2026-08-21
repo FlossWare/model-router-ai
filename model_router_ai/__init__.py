@@ -48,6 +48,8 @@ from model_router_ai.strategies import (
     CascadeStrategy,
 )
 
+__version__ = "0.1"
+
 __all__ = [
     "BudgetGuard",
     "BudgetStatus",

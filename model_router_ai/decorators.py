@@ -23,12 +23,14 @@ freely composable in any order.
 
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 import logging
 import random
 import time
 from typing import Any, Callable
 
+from model_router_ai.protocol import ModelRouter
 from model_router_ai.types import (
     BudgetStatus,
     ChatMessage,
@@ -47,7 +49,7 @@ class _RouterDecorator:
     Subclasses override ``chat()`` and optionally ``list_models()``.
     """
 
-    def __init__(self, wrapped: Any) -> None:
+    def __init__(self, wrapped: ModelRouter) -> None:
         self._wrapped = wrapped
 
     async def initialize(self) -> None:
@@ -89,7 +91,7 @@ class CostAware(_RouterDecorator):
 
     def __init__(
         self,
-        wrapped: Any,
+        wrapped: ModelRouter,
         max_cost_per_call: float | None = None,
         prefer_free: bool = True,
         max_attempts: int = 5,
@@ -180,7 +182,7 @@ class BudgetGuard(_RouterDecorator):
 
     def __init__(
         self,
-        wrapped: Any,
+        wrapped: ModelRouter,
         max_monthly: float = 300.0,
         alert_thresholds: list[float] | None = None,
         on_alert: Callable[[float, float], None] | None = None,
@@ -192,6 +194,7 @@ class BudgetGuard(_RouterDecorator):
         self._thresholds = alert_thresholds or [50.0, 75.0, 90.0]
         self._triggered: set[float] = set()
         self._on_alert = on_alert
+        self._lock = asyncio.Lock()
 
     async def chat(
         self,
@@ -201,18 +204,20 @@ class BudgetGuard(_RouterDecorator):
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> ChatResponse:
-        if self._spent >= self._max:
-            raise BudgetExhaustedError(
-                f"Budget exhausted: ${self._spent:.2f} / ${self._max:.2f}"
-            )
+        async with self._lock:
+            if self._spent >= self._max:
+                raise BudgetExhaustedError(
+                    f"Budget exhausted: ${self._spent:.2f} / ${self._max:.2f}"
+                )
 
         resp = await self._wrapped.chat(
             messages, model=model, temperature=temperature, max_tokens=max_tokens
         )
 
-        self._spent += resp.cost_usd
-        self._calls += 1
-        self._check_thresholds()
+        async with self._lock:
+            self._spent += resp.cost_usd
+            self._calls += 1
+            self._check_thresholds()
         return resp
 
     def _check_thresholds(self) -> None:
@@ -270,7 +275,7 @@ class PolicyGuard(_RouterDecorator):
 
     def __init__(
         self,
-        wrapped: Any,
+        wrapped: ModelRouter,
         allowed: list[str] | None = None,
         blocked: list[str] | None = None,
         allowed_providers: list[str] | None = None,
@@ -363,10 +368,11 @@ class LatencyOptimizer(_RouterDecorator):
         Number of recent calls to track per model.
     """
 
-    def __init__(self, wrapped: Any, window_size: int = 20) -> None:
+    def __init__(self, wrapped: ModelRouter, window_size: int = 20) -> None:
         super().__init__(wrapped)
         self._latencies: dict[str, list[float]] = {}
         self._window = window_size
+        self._lock = asyncio.Lock()
 
     async def chat(
         self,
@@ -380,11 +386,12 @@ class LatencyOptimizer(_RouterDecorator):
             messages, model=model, temperature=temperature, max_tokens=max_tokens
         )
         if resp.model:
-            key = f"{resp.provider}/{resp.model}"
-            samples = self._latencies.setdefault(key, [])
-            samples.append(resp.latency_ms)
-            if len(samples) > self._window:
-                self._latencies[key] = samples[-self._window :]
+            async with self._lock:
+                key = f"{resp.provider}/{resp.model}"
+                samples = self._latencies.setdefault(key, [])
+                samples.append(resp.latency_ms)
+                if len(samples) > self._window:
+                    self._latencies[key] = samples[-self._window :]
 
         return resp
 
@@ -420,13 +427,14 @@ class ThompsonSamplingSelector(_RouterDecorator):
 
     def __init__(
         self,
-        wrapped: Any,
+        wrapped: ModelRouter,
         quality_threshold: float = 0.5,
     ) -> None:
         super().__init__(wrapped)
         self._alpha: dict[str, float] = {}
         self._beta: dict[str, float] = {}
         self._threshold = quality_threshold
+        self._lock = asyncio.Lock()
 
     async def chat(
         self,
@@ -440,7 +448,8 @@ class ThompsonSamplingSelector(_RouterDecorator):
             resp = await self._wrapped.chat(
                 messages, model=model, temperature=temperature, max_tokens=max_tokens
             )
-            self._record(resp.model or model, True)
+            async with self._lock:
+                self._record(resp.model or model, True)
             return resp
 
         models = await self._wrapped.list_models()
@@ -449,7 +458,8 @@ class ThompsonSamplingSelector(_RouterDecorator):
                 messages, temperature=temperature, max_tokens=max_tokens
             )
 
-        selected = self._sample_best(models)
+        async with self._lock:
+            selected = self._sample_best(models)
 
         try:
             resp = await self._wrapped.chat(
@@ -458,10 +468,12 @@ class ThompsonSamplingSelector(_RouterDecorator):
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
-            self._record(selected.model_id, bool(resp.content))
+            async with self._lock:
+                self._record(selected.model_id, bool(resp.content))
             return resp
         except Exception:
-            self._record(selected.model_id, False)
+            async with self._lock:
+                self._record(selected.model_id, False)
             return await self._wrapped.chat(
                 messages, temperature=temperature, max_tokens=max_tokens
             )

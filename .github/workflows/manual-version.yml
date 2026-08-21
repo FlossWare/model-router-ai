@@ -1,0 +1,145 @@
+name: Manual Version Bump
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump type (leave empty if providing explicit version)'
+        required: false
+        type: choice
+        options:
+          - ''
+          - minor
+          - major
+      version:
+        description: 'Explicit version (X.Y format, leave empty if using bump_type)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  manual-version:
+    name: Manual version bump
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Validate inputs
+        run: |
+          BUMP_TYPE="${{ inputs.bump_type }}"
+          VERSION="${{ inputs.version }}"
+
+          if [[ -z "$BUMP_TYPE" && -z "$VERSION" ]]; then
+            echo "Error: Must provide either bump_type OR version"
+            exit 1
+          fi
+
+          if [[ -n "$BUMP_TYPE" && -n "$VERSION" ]]; then
+            echo "Error: Cannot provide both bump_type AND version"
+            exit 1
+          fi
+
+          if [[ -n "$VERSION" ]]; then
+            if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
+              echo "Error: Version must be in X.Y format (e.g., 1.0, 0.9)"
+              exit 1
+            fi
+          fi
+
+      - name: Get current version
+        id: get-current
+        run: |
+          CURRENT=$(grep -oP 'version = "\K[0-9]+\.[0-9]+' pyproject.toml | head -1)
+          echo "current-version=$CURRENT" >> $GITHUB_OUTPUT
+          echo "Current version: $CURRENT"
+
+      - name: Calculate new version
+        id: calculate
+        run: |
+          CURRENT="${{ steps.get-current.outputs.current-version }}"
+          BUMP_TYPE="${{ inputs.bump_type }}"
+          VERSION="${{ inputs.version }}"
+
+          CURRENT_MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+          CURRENT_MINOR=$(echo "$CURRENT" | cut -d. -f2)
+
+          if [[ -n "$BUMP_TYPE" ]]; then
+            if [[ "$BUMP_TYPE" == "minor" ]]; then
+              NEW_MINOR=$((CURRENT_MINOR + 1))
+              NEW_VERSION="${CURRENT_MAJOR}.${NEW_MINOR}"
+            elif [[ "$BUMP_TYPE" == "major" ]]; then
+              NEW_MAJOR=$((CURRENT_MAJOR + 1))
+              NEW_VERSION="${NEW_MAJOR}.0"
+            fi
+          else
+            NEW_VERSION="$VERSION"
+            NEW_MAJOR=$(echo "$NEW_VERSION" | cut -d. -f1)
+            NEW_MINOR=$(echo "$NEW_VERSION" | cut -d. -f2)
+
+            if [[ $NEW_MAJOR -lt $CURRENT_MAJOR ]] || \
+               [[ $NEW_MAJOR -eq $CURRENT_MAJOR && $NEW_MINOR -le $CURRENT_MINOR ]]; then
+              echo "Error: New version ($NEW_VERSION) must be greater than current ($CURRENT)"
+              exit 1
+            fi
+          fi
+
+          echo "New version: $NEW_VERSION"
+          echo "new-version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Update version files
+        run: |
+          NEW_VERSION="${{ steps.calculate.outputs.new-version }}"
+
+          sed -i 's/^version = "[0-9]\+\.[0-9]\+"/version = "'"$NEW_VERSION"'"/' pyproject.toml
+          sed -i 's/__version__ = "[0-9]\+\.[0-9]\+"/__version__ = "'"$NEW_VERSION"'"/' model_router_ai/__init__.py
+
+      - name: Validate version sync
+        run: |
+          PYPROJECT_VERSION=$(grep -oP 'version = "\K[0-9]+\.[0-9]+' pyproject.toml | head -1)
+          INIT_VERSION=$(grep -oP '__version__ = "\K[0-9]+\.[0-9]+' model_router_ai/__init__.py)
+
+          if [ "$PYPROJECT_VERSION" != "$INIT_VERSION" ]; then
+            echo "ERROR: Version mismatch!"
+            exit 1
+          fi
+
+          echo "Version sync validated: $PYPROJECT_VERSION"
+
+      - name: Commit and tag
+        run: |
+          NEW_VERSION="${{ steps.calculate.outputs.new-version }}"
+
+          git add pyproject.toml model_router_ai/__init__.py
+
+          if [[ -n "${{ inputs.bump_type }}" ]]; then
+            COMMIT_MSG="Manual version bump to $NEW_VERSION (${{ inputs.bump_type }})"
+          else
+            COMMIT_MSG="Manual version bump to $NEW_VERSION"
+          fi
+
+          git commit -m "$COMMIT_MSG"
+
+          TAG="v$NEW_VERSION"
+          git tag -a "$TAG" -m "Release $NEW_VERSION"
+
+      - name: Push changes
+        run: |
+          NEW_VERSION="${{ steps.calculate.outputs.new-version }}"
+          TAG="v$NEW_VERSION"
+
+          git push origin HEAD:main
+          git push origin "$TAG"
+
+          echo "Pushed commit and tag $TAG"

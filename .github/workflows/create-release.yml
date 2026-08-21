@@ -1,0 +1,158 @@
+name: Create GitHub Release
+
+on:
+  push:
+    tags:
+      - 'v*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  validate-tag:
+    name: Validate tag format
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+    steps:
+      - name: Validate tag format (vX.Y only)
+        id: validate
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "Tag: $TAG"
+
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid tag format: $TAG"
+            echo "FlossWare standard requires vX.Y format (e.g., v0.2, v1.0, v12.5)"
+            echo "Rejected formats: vX.Y.Z, vX.Y-beta, vX.Y.0, etc."
+            exit 1
+          fi
+
+          VERSION="${TAG#v}"
+          echo "Valid tag format: $TAG -> version $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+  generate-changelog:
+    name: Generate changelog
+    runs-on: ubuntu-latest
+    needs: validate-tag
+    outputs:
+      changelog: ${{ steps.changelog.outputs.changelog }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Get previous tag
+        id: previous
+        run: |
+          CURRENT_TAG="${GITHUB_REF#refs/tags/}"
+          PREVIOUS_TAG=$(git tag -l 'v*.*' --sort=-version:refname | grep -v "$CURRENT_TAG" | head -n 1)
+
+          if [ -z "$PREVIOUS_TAG" ]; then
+            PREVIOUS_TAG=$(git rev-list --max-parents=0 HEAD)
+          fi
+
+          echo "Previous tag/commit: $PREVIOUS_TAG"
+          echo "tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog from commits
+        id: changelog
+        run: |
+          CURRENT_TAG="${GITHUB_REF#refs/tags/}"
+          PREVIOUS_TAG="${{ steps.previous.outputs.tag }}"
+
+          COMMITS=$(git log --pretty=format:"%H|%s|%an" "$PREVIOUS_TAG..$CURRENT_TAG")
+
+          FEATURES=""
+          FIXES=""
+          BREAKING=""
+          DOCS=""
+          REFACTOR=""
+          OTHER=""
+
+          while IFS='|' read -r hash subject author; do
+            COMMIT_LINK="https://github.com/${{ github.repository }}/commit/$hash"
+            SHORT_HASH="${hash:0:7}"
+
+            case "$subject" in
+              feat:*|feat\(*|Feature:*|Add\ *)
+                FEATURES="${FEATURES}- $subject ([$SHORT_HASH]($COMMIT_LINK))"$'\n'
+                ;;
+              fix:*|fix\(*|Fix\ *|Fixed\ *)
+                FIXES="${FIXES}- $subject ([$SHORT_HASH]($COMMIT_LINK))"$'\n'
+                ;;
+              *BREAKING\ CHANGE*|*!:*)
+                BREAKING="${BREAKING}- $subject ([$SHORT_HASH]($COMMIT_LINK))"$'\n'
+                ;;
+              docs:*|docs\(*|Doc\ *|Documentation\ *)
+                DOCS="${DOCS}- $subject ([$SHORT_HASH]($COMMIT_LINK))"$'\n'
+                ;;
+              refactor:*|refactor\(*|Refactor\ *)
+                REFACTOR="${REFACTOR}- $subject ([$SHORT_HASH]($COMMIT_LINK))"$'\n'
+                ;;
+              *)
+                OTHER="${OTHER}- $subject ([$SHORT_HASH]($COMMIT_LINK))"$'\n'
+                ;;
+            esac
+          done <<< "$COMMITS"
+
+          CHANGELOG="## What's Changed"$'\n\n'
+
+          if [ -n "$BREAKING" ]; then
+            CHANGELOG="${CHANGELOG}### Breaking Changes"$'\n\n'"$BREAKING"$'\n'
+          fi
+          if [ -n "$FEATURES" ]; then
+            CHANGELOG="${CHANGELOG}### Features"$'\n\n'"$FEATURES"$'\n'
+          fi
+          if [ -n "$FIXES" ]; then
+            CHANGELOG="${CHANGELOG}### Bug Fixes"$'\n\n'"$FIXES"$'\n'
+          fi
+          if [ -n "$DOCS" ]; then
+            CHANGELOG="${CHANGELOG}### Documentation"$'\n\n'"$DOCS"$'\n'
+          fi
+          if [ -n "$REFACTOR" ]; then
+            CHANGELOG="${CHANGELOG}### Refactoring"$'\n\n'"$REFACTOR"$'\n'
+          fi
+          if [ -n "$OTHER" ]; then
+            CHANGELOG="${CHANGELOG}### Other Changes"$'\n\n'"$OTHER"$'\n'
+          fi
+
+          CONTRIBUTORS=$(git log --pretty=format:"%an" "$PREVIOUS_TAG..$CURRENT_TAG" | sort -u | sed 's/^/* @/')
+          if [ -n "$CONTRIBUTORS" ]; then
+            CHANGELOG="${CHANGELOG}### Contributors"$'\n\n'"$CONTRIBUTORS"$'\n'
+          fi
+
+          CHANGELOG="${CHANGELOG}"$'\n'"**Full Changelog**: https://github.com/${{ github.repository }}/compare/$PREVIOUS_TAG...$CURRENT_TAG"
+
+          {
+            echo 'changelog<<EOF'
+            echo "$CHANGELOG"
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [validate-tag, generate-changelog]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${{ needs.validate-tag.outputs.version }}"
+
+          cat > release-notes.md << 'EOF'
+          ${{ needs.generate-changelog.outputs.changelog }}
+          EOF
+
+          gh release create "$TAG" \
+            --title "Release $VERSION" \
+            --notes-file release-notes.md \
+            --verify-tag
