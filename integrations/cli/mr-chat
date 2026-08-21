@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""CLI wrapper for model-router-ai.
+
+Routes LLM chat requests through the decorator stack:
+PolicyGuard > BudgetGuard > CostAware > ThompsonSamplingSelector > ProviderRouter
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+# Allow running without pip install.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
+from model_router_ai import (
+    BudgetGuard,
+    ChatMessage,
+    CostAware,
+    GeminiProvider,
+    LatencyOptimizer,
+    OpenAICompatProvider,
+    PolicyGuard,
+    ProviderRouter,
+    ThompsonSamplingSelector,
+    CohereProvider,
+)
+
+# ── API key resolution ──────────────────────────────────────────────
+
+_KEY_ENV_MAP: dict[str, str] = {
+    "groq": "GROQ_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "cohere": "COHERE_API_KEY",
+    "cerebras": "CEREBRAS_API_KEY",
+}
+
+_SECRETS_BASE = os.environ.get("SECRET_ORCHESTRATOR_URL", "http://aio-01:5000/secrets")
+
+
+def _fetch_secret(name: str, timeout: float = 2.0) -> str | None:
+    """Try to fetch a secret from the orchestrator. Returns None on any failure."""
+    try:
+        req = urllib.request.Request(f"{_SECRETS_BASE}/{name}")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            data = json.loads(resp.read())
+            return data.get("value") or data.get("secret") or None
+    except Exception:
+        return None
+
+
+def _resolve_key(env_var: str) -> str | None:
+    """Return key from env, falling back to orchestrator secret endpoint."""
+    value = os.environ.get(env_var)
+    if value:
+        return value
+    return _fetch_secret(env_var)
+
+
+# ── Router construction ─────────────────────────────────────────────
+
+def _build_router(
+    provider_names: list[str] | None,
+    budget: float,
+    free_only: bool,
+) -> PolicyGuard | None:
+    """Build the decorator stack, returning the outermost layer or None."""
+
+    base = ProviderRouter()
+    has_provider = False
+
+    # Determine which providers to configure.
+    requested = set(p.strip().lower() for p in provider_names) if provider_names else set(_KEY_ENV_MAP.keys())
+
+    for provider_name in sorted(requested):
+        env_var = _KEY_ENV_MAP.get(provider_name)
+        if env_var is None:
+            print(f"Warning: unknown provider {provider_name!r}, skipping.", file=sys.stderr)
+            continue
+
+        api_key = _resolve_key(env_var)
+        if not api_key:
+            continue
+
+        if provider_name == "gemini":
+            base.add_provider(GeminiProvider(), api_key=api_key)
+        elif provider_name == "cohere":
+            base.add_provider(CohereProvider(), api_key=api_key)
+        else:
+            base.add_provider(
+                OpenAICompatProvider(provider_name, free_only=free_only),
+                api_key=api_key,
+            )
+        has_provider = True
+
+    if not has_provider:
+        return None
+
+    thompson = ThompsonSamplingSelector(base)
+    latency_opt = LatencyOptimizer(thompson)
+    cost_aware = CostAware(latency_opt, prefer_free=free_only)
+    budget_guard = BudgetGuard(cost_aware, max_monthly=budget)
+    policy_guard = PolicyGuard(budget_guard)
+
+    return policy_guard
+
+
+# ── Subcommands ──────────────────────────────────────────────────────
+
+async def _list_models(router: PolicyGuard) -> None:
+    models = await router.list_models()
+    if not models:
+        print("No models discovered.", file=sys.stderr)
+        return
+    fmt = "{:<12} {}"
+    print(fmt.format("PROVIDER", "MODEL"))
+    print(fmt.format("--------", "-----"))
+    for m in sorted(models, key=lambda x: (x.provider, x.model_id)):
+        print(fmt.format(m.provider, m.model_id))
+    print(f"\n{len(models)} model(s) available.")
+
+
+async def _show_status(router: PolicyGuard) -> None:
+    # Walk the decorator stack to find BudgetGuard.
+    layer = router
+    while hasattr(layer, "_wrapped"):
+        if isinstance(layer, BudgetGuard):
+            s = layer.status
+            print(f"Budget:    ${s.max_usd:.2f}")
+            print(f"Spent:     ${s.spent_usd:.2f}")
+            print(f"Remaining: ${s.remaining_usd:.2f}")
+            print(f"Calls:     {s.calls_made}")
+            print(f"Used:      {s.percent_used:.1f}%")
+            return
+        layer = layer._wrapped
+    print("No budget information available.")
+
+
+async def _chat(
+    router: PolicyGuard,
+    prompt: str,
+    model: str | None,
+    temperature: float,
+    max_tokens: int | None,
+    output_json: bool,
+) -> None:
+    messages = [ChatMessage(role="user", content=prompt)]
+    try:
+        resp = await router.chat(
+            messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if output_json:
+        out = {
+            "content": resp.content,
+            "model": resp.model,
+            "provider": resp.provider,
+            "usage": resp.usage,
+            "latency_ms": round(resp.latency_ms, 1),
+            "cost_usd": resp.cost_usd,
+        }
+        print(json.dumps(out, indent=2))
+    else:
+        print(resp.content)
+
+
+# ── CLI entry point ──────────────────────────────────────────────────
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="mr-chat",
+        description="Chat with LLMs via model-router-ai decorator stack.",
+    )
+    parser.add_argument("prompt", nargs="*", help="Prompt text (or pipe via stdin)")
+    parser.add_argument("--model", default=None, help="Request a specific model")
+    parser.add_argument(
+        "--providers",
+        default=None,
+        help="Comma-separated provider names (default: all with keys set)",
+    )
+    parser.add_argument(
+        "--budget", type=float, default=300.0, help="Monthly budget cap in USD (default: 300)"
+    )
+    parser.add_argument(
+        "--temperature", type=float, default=0.7, help="Sampling temperature (default: 0.7)"
+    )
+    parser.add_argument("--max-tokens", type=int, default=None, help="Max output tokens")
+    parser.add_argument(
+        "--free-only", action="store_true", help="Only use free models"
+    )
+    parser.add_argument(
+        "--json", dest="output_json", action="store_true", help="Output full JSON response"
+    )
+    parser.add_argument(
+        "--list-models", action="store_true", help="List available models and exit"
+    )
+    parser.add_argument(
+        "--status", action="store_true", help="Show budget status and exit"
+    )
+
+    args = parser.parse_args()
+
+    provider_list = [p.strip() for p in args.providers.split(",")] if args.providers else None
+
+    router = _build_router(provider_list, args.budget, args.free_only)
+    if router is None:
+        print(
+            "Error: No API keys found. Set at least one of: "
+            + ", ".join(sorted(_KEY_ENV_MAP.values())),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if args.list_models:
+        asyncio.run(_list_models(router))
+        return
+
+    if args.status:
+        asyncio.run(_show_status(router))
+        return
+
+    # Resolve prompt from args or stdin.
+    if args.prompt:
+        prompt = " ".join(args.prompt)
+    elif not sys.stdin.isatty():
+        prompt = sys.stdin.read().strip()
+    else:
+        print("Error: No prompt provided. Pass as arguments or pipe via stdin.", file=sys.stderr)
+        parser.print_usage(sys.stderr)
+        sys.exit(1)
+
+    if not prompt:
+        print("Error: Empty prompt.", file=sys.stderr)
+        sys.exit(1)
+
+    asyncio.run(
+        _chat(router, prompt, args.model, args.temperature, args.max_tokens, args.output_json)
+    )
+
+
+if __name__ == "__main__":
+    main()

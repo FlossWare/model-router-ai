@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "model-router": {
+      "command": "python3",
+      "args": ["/tmp/model-router-repo/integrations/mcp/server.py"],
+      "env": {
+        "GROQ_API_KEY": "",
+        "OPENROUTER_API_KEY": "",
+        "GEMINI_API_KEY": "",
+        "COHERE_API_KEY": "",
+        "CEREBRAS_API_KEY": "",
+        "BUDGET_MAX_MONTHLY": "300",
+        "SECRET_ORCHESTRATOR_URL": "http://aio-01:5000/secrets"
+      }
+    }
+  }
+}

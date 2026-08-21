@@ -21,6 +21,7 @@ from model_router_ai import (
     CostAware,
     BudgetGuard,
     PolicyGuard,
+    LatencyOptimizer,
     ThompsonSamplingSelector,
     ChatMessage,
 )
@@ -35,7 +36,10 @@ async def main():
     router = PolicyGuard(
         BudgetGuard(
             CostAware(
-                ThompsonSamplingSelector(base)
+                LatencyOptimizer(
+                    ThompsonSamplingSelector(base)
+                ),
+                prefer_free=True,
             ),
             max_monthly=300.0,
         ),
@@ -203,32 +207,18 @@ router = ProviderRouter(strategy=CascadeStrategy(preferred=["gemini-2.5-flash"])
 | `LatencyWeightedStrategy` | Prefer faster endpoints |
 | `CascadeStrategy` | Try preferred models first |
 
-## Platform Integration
+## Integrations
 
-### loom-ai
+Ready-to-use integration code lives in `integrations/`:
 
-```python
-from loom_ai.backends.model_router_backend import DecoratorModelRouter
+| Integration | Location | Description |
+|---|---|---|
+| **MCP Server** | `integrations/mcp/` | Exposes `chat`, `multi_model_chat`, `list_models`, `budget_status`, `model_performance` as MCP tools |
+| **CLI** | `integrations/cli/` | `mr-chat` command with `--free-only`, `--json`, `--list-models`, `--status` |
+| **Skills** | `integrations/skills/` | Claude Code `/multi-model-query`, `/budget-check`, `/model-stats` |
+| **CLAUDE.md** | `integrations/claude-code/` | Paste-ready snippet for project integration |
 
-backend = DecoratorModelRouter(
-    max_monthly=300.0,
-    allowed_models=["gemini-*", "claude-*"],
-)
-```
-
-### Standalone (Claude Code, Crush, Codex)
-
-```python
-from model_router_ai import ProviderRouter, BudgetGuard, CostAware
-import os
-
-base = ProviderRouter()
-base.add_provider(
-    OpenAICompatProvider("openrouter"),
-    api_key=os.environ["OPENROUTER_API_KEY"],
-)
-router = BudgetGuard(CostAware(base), max_monthly=300.0)
-```
+See `integrations/README.md` and `INTEGRATIONS.md` for setup details.
 
 ## Testing
 

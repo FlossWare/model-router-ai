@@ -5,6 +5,15 @@ Install:
 pip install "git+https://github.com/FlossWare/model-router-ai.git"
 ```
 
+## Ready-to-Use Integrations
+
+See the `integrations/` directory for drop-in integration code:
+
+- **`integrations/mcp/`** — MCP server exposing `chat`, `multi_model_chat`, `list_models`, `budget_status`, `model_performance` as tools
+- **`integrations/cli/`** — `mr-chat` CLI wrapper with `--free-only`, `--json`, `--list-models`, `--status`
+- **`integrations/skills/`** — Claude Code skill files for `/multi-model-query`, `/budget-check`, `/model-stats`
+- **`integrations/claude-code/`** — Paste-ready CLAUDE.md snippet
+
 ---
 
 ## Claude Code
@@ -18,7 +27,7 @@ This project uses `model-router-ai` for cost-aware, policy-controlled LLM routin
 Stack decorators to compose routing behavior (budget limits, model allowlists, latency optimization).
 
 ```python
-from model_router import (
+from model_router_ai import (
     CostAware, BudgetGuard, PolicyGuard, LatencyOptimizer,
     ProviderRouter, OpenAICompatProvider,
 )
@@ -65,7 +74,7 @@ Show: spent so far, remaining budget, projected end-of-month total.
 Use `model-router-ai` for routing LLM calls across providers:
 
 ```python
-from model_router import (
+from model_router_ai import (
     CostAware, BudgetGuard, PolicyGuard,
     ProviderRouter, OpenAICompatProvider,
 )
@@ -95,7 +104,7 @@ Use model-router-ai for LLM routing:
 - ThompsonSamplingSelector: bandit-based model selection
 
 Decorator stacking order (outermost first): PolicyGuard > BudgetGuard > CostAware > base
-Import from: from model_router import CostAware, BudgetGuard, PolicyGuard, ProviderRouter
+Import from: from model_router_ai import CostAware, BudgetGuard, PolicyGuard, ProviderRouter
 Package: pip install "git+https://github.com/FlossWare/model-router-ai.git"
 Zero dependencies — stdlib only.
 ```
@@ -107,7 +116,7 @@ Zero dependencies — stdlib only.
 ### Configuration
 ```python
 from crush import Agent
-from model_router import (
+from model_router_ai import (
     CostAware, BudgetGuard, PolicyGuard,
     ProviderRouter, OpenAICompatProvider,
 )
@@ -140,7 +149,7 @@ class RoutedAgent(Agent):
 ### Full usage patterns
 ```python
 import os
-from model_router import (
+from model_router_ai import (
     CostAware, BudgetGuard, PolicyGuard, LatencyOptimizer,
     ThompsonSamplingSelector,
     ProviderRouter, OpenAICompatProvider, GeminiProvider,
@@ -203,7 +212,7 @@ cascade = CascadeStrategy(
 from resilience_ai import with_retry, with_circuit_breaker
 from observability_ai import track_execution, ExecutionTelemetry
 from security_ai import mask_secrets
-from model_router import CostAware, BudgetGuard, ProviderRouter
+from model_router_ai import CostAware, BudgetGuard, ProviderRouter
 
 telemetry = ExecutionTelemetry()
 
@@ -223,7 +232,7 @@ async def routed_call(prompt: str) -> str:
 ### With consensus-ai
 ```python
 from consensus_ai import with_consensus
-from model_router import ProviderRouter, OpenAICompatProvider
+from model_router_ai import ProviderRouter, OpenAICompatProvider
 
 provider = OpenAICompatProvider(...)
 router = ProviderRouter(providers=[provider])
