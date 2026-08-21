@@ -1,4 +1,4 @@
-# model-router
+# model-router-ai
 
 Decorator-based LLM model router with cost-aware, budget-tracking, and policy-enforcing composable layers.
 
@@ -7,14 +7,14 @@ Decorator-based LLM model router with cost-aware, budget-tracking, and policy-en
 ## Install
 
 ```bash
-pip install git+https://github.com/FlossWare/model-router.git
+pip install git+https://github.com/FlossWare/model-router-ai.git
 ```
 
 ## Quick Start
 
 ```python
 import asyncio
-from model_router import (
+from model_router_ai import (
     ProviderRouter,
     OpenAICompatProvider,
     GeminiProvider,
@@ -176,7 +176,7 @@ Built-in cost metadata for popular models (USD per 1M tokens):
 Custom costs:
 
 ```python
-from model_router import ModelCost
+from model_router_ai import ModelCost
 
 base.add_provider(
     OpenAICompatProvider("openai", cost_map={
@@ -191,7 +191,7 @@ base.add_provider(
 The base `ProviderRouter` accepts a pluggable selection strategy:
 
 ```python
-from model_router import ProviderRouter, CascadeStrategy
+from model_router_ai import ProviderRouter, CascadeStrategy
 
 router = ProviderRouter(strategy=CascadeStrategy(preferred=["gemini-2.5-flash"]))
 ```
@@ -219,7 +219,7 @@ backend = DecoratorModelRouter(
 ### Standalone (Claude Code, Crush, Codex)
 
 ```python
-from model_router import ProviderRouter, BudgetGuard, CostAware
+from model_router_ai import ProviderRouter, BudgetGuard, CostAware
 import os
 
 base = ProviderRouter()

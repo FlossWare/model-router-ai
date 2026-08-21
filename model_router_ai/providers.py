@@ -19,7 +19,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
-from model_router.types import ChatMessage, ChatResponse, ModelCost, ModelInfo
+from model_router_ai.types import ChatMessage, ChatResponse, ModelCost, ModelInfo
 
 logger = logging.getLogger(__name__)
 

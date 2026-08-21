@@ -19,29 +19,29 @@ Stack decorators to compose routing behavior::
 Each decorator adds exactly one concern without changing the interface.
 """
 
-from model_router.types import (
+from model_router_ai.types import (
     BudgetStatus,
     ChatMessage,
     ChatResponse,
     ModelCost,
     ModelInfo,
 )
-from model_router.protocol import ModelRouter
-from model_router.router import ProviderRouter
-from model_router.providers import (
+from model_router_ai.protocol import ModelRouter
+from model_router_ai.router import ProviderRouter
+from model_router_ai.providers import (
     OpenAICompatProvider,
     GeminiProvider,
     CohereProvider,
     VertexAIProvider,
 )
-from model_router.decorators import (
+from model_router_ai.decorators import (
     CostAware,
     BudgetGuard,
     PolicyGuard,
     LatencyOptimizer,
     ThompsonSamplingSelector,
 )
-from model_router.strategies import (
+from model_router_ai.strategies import (
     ThompsonSamplingStrategy,
     RoundRobinStrategy,
     LatencyWeightedStrategy,

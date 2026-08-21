@@ -1,4 +1,4 @@
-"""Tests for the standalone model_router decorator pattern.
+"""Tests for the standalone model_router_ai decorator pattern.
 
 Tests each decorator independently and composed.
 """
@@ -13,8 +13,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from model_router.types import ChatMessage, ChatResponse, ModelCost, ModelInfo
-from model_router.decorators import (
+from model_router_ai.types import ChatMessage, ChatResponse, ModelCost, ModelInfo
+from model_router_ai.decorators import (
     BudgetExhaustedError,
     BudgetGuard,
     CostAware,

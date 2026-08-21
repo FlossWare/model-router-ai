@@ -11,9 +11,9 @@ import logging
 import time
 from typing import Any
 
-from model_router.providers import _BaseProvider
-from model_router.strategies import SelectionStrategy, ThompsonSamplingStrategy
-from model_router.types import ChatMessage, ChatResponse, ModelInfo
+from model_router_ai.providers import _BaseProvider
+from model_router_ai.strategies import SelectionStrategy, ThompsonSamplingStrategy
+from model_router_ai.types import ChatMessage, ChatResponse, ModelInfo
 
 logger = logging.getLogger(__name__)
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import AsyncIterator, Protocol, runtime_checkable
 
-from model_router.types import ChatMessage, ChatResponse, ModelInfo
+from model_router_ai.types import ChatMessage, ChatResponse, ModelInfo
 
 
 @runtime_checkable

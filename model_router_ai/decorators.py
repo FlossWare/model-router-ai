@@ -29,7 +29,7 @@ import random
 import time
 from typing import Any, Callable
 
-from model_router.types import (
+from model_router_ai.types import (
     BudgetStatus,
     ChatMessage,
     ChatResponse,
