@@ -14,6 +14,7 @@ pip install git+https://github.com/FlossWare/model-router-ai.git
 
 ```python
 import asyncio
+import os
 from model_router_ai import (
     ProviderRouter,
     OpenAICompatProvider,
@@ -29,8 +30,8 @@ from model_router_ai import (
 async def main():
     # 1. Create the base router with providers
     base = ProviderRouter()
-    base.add_provider(OpenAICompatProvider("groq"), api_key="gsk_...")
-    base.add_provider(GeminiProvider(), api_key="AIza...")
+    base.add_provider(OpenAICompatProvider("groq"), api_key=os.environ["GROQ_API_KEY"])
+    base.add_provider(GeminiProvider(), api_key=os.environ["GEMINI_API_KEY"])
 
     # 2. Stack decorators — each adds one concern
     router = PolicyGuard(
@@ -133,7 +134,7 @@ Bayesian explore/exploit for model selection. Balances trying new models with us
 router = ThompsonSamplingSelector(base)
 
 # After some calls:
-print(router.performance())
+print(await router.performance())
 # {'gemini-2.5-flash': {'alpha': 15.0, 'beta': 2.0, 'mean': 0.88, 'trials': 15}, ...}
 ```
 
@@ -206,6 +207,61 @@ router = ProviderRouter(strategy=CascadeStrategy(preferred=["gemini-2.5-flash"])
 | `RoundRobinStrategy` | Even spread across endpoints |
 | `LatencyWeightedStrategy` | Prefer faster endpoints |
 | `CascadeStrategy` | Try preferred models first |
+
+## Protocol Delegation
+
+BudgetGuard and ThompsonSamplingSelector can delegate to external implementations via injectable protocols. This lets packages like [budget-ai](https://github.com/FlossWare/budget-ai) and [strategy-ai](https://github.com/FlossWare/strategy-ai) provide rich implementations without model-router-ai depending on them.
+
+### UsageTracker Protocol
+
+Inject a custom budget tracker into BudgetGuard:
+
+```python
+from model_router_ai import BudgetGuard, UsageTracker
+
+class MyTracker:  # satisfies UsageTracker protocol via structural subtyping
+    async def record_usage(self, model, cost_usd, usage=None): ...
+    async def is_exceeded(self): ...
+    async def get_status(self): ...
+    def reset(self): ...
+
+router = BudgetGuard(base, tracker=MyTracker())
+```
+
+Without an injected tracker, BudgetGuard uses a built-in `_SimpleBudgetTracker`.
+
+### ModelSelector Protocol
+
+Inject a custom model selection strategy into ThompsonSamplingSelector:
+
+```python
+from model_router_ai import ThompsonSamplingSelector, ModelSelector
+
+class MySelector:  # satisfies ModelSelector protocol
+    async def select(self, candidates: list[str]) -> str: ...
+    async def record(self, model_id: str, success: bool) -> None: ...
+    async def stats(self) -> dict: ...
+
+router = ThompsonSamplingSelector(base, selector=MySelector())
+```
+
+### Adapters for budget-ai / strategy-ai
+
+Pre-built adapters bridge the signature differences between model-router-ai's protocols and sibling FlossWare packages:
+
+```python
+from model_router_ai.adapters import BudgetAIAdapter, StrategyAIAdapter
+
+# budget-ai integration
+from budget_ai import InMemoryBudgetTracker
+router = BudgetGuard(base, tracker=BudgetAIAdapter(InMemoryBudgetTracker(max_cost=300.0)))
+
+# strategy-ai integration
+from strategy_ai import ThompsonSamplingSelector as TSSelector
+router = ThompsonSamplingSelector(base, selector=StrategyAIAdapter(TSSelector()))
+```
+
+Both adapters are optional — model-router-ai works without budget-ai or strategy-ai installed. Error handling is fail-open by default (`fail_open=True` on BudgetGuard).
 
 ## Integrations
 
