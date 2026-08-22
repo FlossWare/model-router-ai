@@ -25,8 +25,9 @@ from model_router_ai.types import (
     ChatResponse,
     ModelCost,
     ModelInfo,
+    UsageInfo,
 )
-from model_router_ai.protocol import ModelRouter
+from model_router_ai.protocol import ModelRouter, ModelSelector, UsageTracker
 from model_router_ai.router import ProviderRouter
 from model_router_ai.providers import (
     OpenAICompatProvider,
@@ -47,10 +48,12 @@ from model_router_ai.strategies import (
     LatencyWeightedStrategy,
     CascadeStrategy,
 )
+from model_router_ai.adapters import BudgetAIAdapter, StrategyAIAdapter
 
 __version__ = "0.1"
 
 __all__ = [
+    "BudgetAIAdapter",
     "BudgetGuard",
     "BudgetStatus",
     "CascadeStrategy",
@@ -64,11 +67,15 @@ __all__ = [
     "ModelCost",
     "ModelInfo",
     "ModelRouter",
+    "ModelSelector",
     "OpenAICompatProvider",
     "PolicyGuard",
     "ProviderRouter",
     "RoundRobinStrategy",
+    "StrategyAIAdapter",
     "ThompsonSamplingSelector",
     "ThompsonSamplingStrategy",
+    "UsageInfo",
+    "UsageTracker",
     "VertexAIProvider",
 ]

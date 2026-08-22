@@ -266,7 +266,7 @@ class TestThompsonSampling:
         router = ThompsonSamplingSelector(fake)
 
         asyncio.run(router.chat([ChatMessage(role="user", content="hi")]))
-        perf = router.performance()
+        perf = asyncio.run(router.performance())
         assert "m1" in perf
         assert perf["m1"]["trials"] == 1
 

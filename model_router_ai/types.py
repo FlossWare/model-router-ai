@@ -7,6 +7,19 @@ independent — can be used without loom-ai installed.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TypedDict
+
+
+class UsageInfo(TypedDict, total=False):
+    """Token usage from a single LLM invocation.
+
+    Aligns with budget-ai's ``TokenUsage`` fields so that objects
+    satisfying one type also satisfy the other via structural subtyping.
+    """
+
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
 
 
 @dataclass
