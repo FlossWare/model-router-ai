@@ -42,7 +42,12 @@ from model_router_ai.types import (
     ModelInfo,
     UsageInfo,
 )
-from model_router_ai.workers import ModelWorker, WorkerResult, WorkerStatus, classify_failure
+from model_router_ai.workers import (
+    ModelWorker,
+    WorkerResult,
+    WorkerStatus,
+    classify_failure,
+)
 
 __version__ = "0.1"
 
