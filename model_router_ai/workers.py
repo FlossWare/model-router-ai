@@ -103,7 +103,9 @@ class ModelWorker:
                 quota_reset=self._unavailable_until,
             )
         try:
-            response = await self.provider.call(self.model, messages, temperature, max_tokens)
+            response = await self.provider.call(
+                self.model, messages, temperature, max_tokens
+            )
             if not response.content:
                 raise RuntimeError("Empty response")
             self.mark_available()
@@ -125,17 +127,23 @@ class ModelWorker:
             )
 
 
-def classify_failure(error: str) -> tuple[WorkerStatus, float | None, float | None]:
+def classify_failure(
+    error: str,
+) -> tuple[WorkerStatus, float | None, float | None]:
     """Classify provider exceptions and recover common rate-limit metadata."""
     lowered = error.lower()
     status_code = _first_int(r"\bHTTP\s+(\d{3})\b", error)
     retry_after = _first_float(
         r"Retry-After['\"]?\s*[:=]\s*['\"]?([0-9.]+)", error
     )
-    reset_ms = _first_float(
+    reset_value = _first_float(
         r"X-RateLimit-Reset['\"]?\s*[:=]\s*['\"]?([0-9.]+)", error
     )
-    quota_reset = reset_ms / 1000.0 if reset_ms and reset_ms > 10_000_000_000 else reset_ms
+    quota_reset = (
+        reset_value / 1000.0
+        if reset_value and reset_value > 10_000_000_000
+        else reset_value
+    )
 
     if status_code == 429:
         quota_tokens = ("free-models-per-day", "daily", "quota", "limit exceeded")
