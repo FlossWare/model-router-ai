@@ -1,13 +1,16 @@
 """Provider, account, identity, and model discovery without persisting credentials."""
+
 from __future__ import annotations
+
 import json
 import os
+import tomllib
 import urllib.error
 import urllib.request
-import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+
 
 @dataclass(frozen=True)
 class ProviderDefinition:
@@ -20,6 +23,7 @@ class ProviderDefinition:
     identity_url: str | None = None
     free_capable: bool = False
 
+
 @dataclass(frozen=True)
 class Account:
     id: str
@@ -28,54 +32,95 @@ class Account:
     credential_source: str
     configured: bool
 
+
 PROVIDERS: tuple[ProviderDefinition, ...] = (
     ProviderDefinition(
-        "anthropic", "Anthropic", "anthropic", "ANTHROPIC_API_KEY",
-        "https://api.anthropic.com", "https://api.anthropic.com/v1/models",
+        "anthropic",
+        "Anthropic",
+        "anthropic",
+        "ANTHROPIC_API_KEY",
+        "https://api.anthropic.com",
+        "https://api.anthropic.com/v1/models",
     ),
     ProviderDefinition(
-        "openai", "OpenAI", "openai-compatible", "OPENAI_API_KEY",
-        "https://api.openai.com/v1", "https://api.openai.com/v1/models",
+        "openai",
+        "OpenAI",
+        "openai-compatible",
+        "OPENAI_API_KEY",
+        "https://api.openai.com/v1",
+        "https://api.openai.com/v1/models",
         "https://api.openai.com/v1/me",
     ),
     ProviderDefinition(
-        "openrouter", "OpenRouter", "openai-compatible", "OPENROUTER_API_KEY",
-        "https://openrouter.ai/api/v1", "https://openrouter.ai/api/v1/models",
-        "https://openrouter.ai/api/v1/auth/key", True,
+        "openrouter",
+        "OpenRouter",
+        "openai-compatible",
+        "OPENROUTER_API_KEY",
+        "https://openrouter.ai/api/v1",
+        "https://openrouter.ai/api/v1/models",
+        "https://openrouter.ai/api/v1/auth/key",
+        True,
     ),
     ProviderDefinition(
-        "groq", "Groq", "openai-compatible", "GROQ_API_KEY",
-        "https://api.groq.com/openai/v1", "https://api.groq.com/openai/v1/models",
+        "groq",
+        "Groq",
+        "openai-compatible",
+        "GROQ_API_KEY",
+        "https://api.groq.com/openai/v1",
+        "https://api.groq.com/openai/v1/models",
         free_capable=True,
     ),
     ProviderDefinition(
-        "cerebras", "Cerebras", "openai-compatible", "CEREBRAS_API_KEY",
-        "https://api.cerebras.ai/v1", "https://api.cerebras.ai/v1/models",
+        "cerebras",
+        "Cerebras",
+        "openai-compatible",
+        "CEREBRAS_API_KEY",
+        "https://api.cerebras.ai/v1",
+        "https://api.cerebras.ai/v1/models",
         free_capable=True,
     ),
     ProviderDefinition(
-        "deepinfra", "DeepInfra", "openai-compatible", "DEEPINFRA_API_TOKEN",
-        "https://api.deepinfra.com/v1/openai", "https://api.deepinfra.com/v1/models",
+        "deepinfra",
+        "DeepInfra",
+        "openai-compatible",
+        "DEEPINFRA_API_TOKEN",
+        "https://api.deepinfra.com/v1/openai",
+        "https://api.deepinfra.com/v1/models",
         free_capable=True,
     ),
     ProviderDefinition(
-        "nvidia", "NVIDIA", "openai-compatible", "NVIDIA_API_KEY",
-        "https://integrate.api.nvidia.com/v1", "https://integrate.api.nvidia.com/v1/models",
+        "nvidia",
+        "NVIDIA",
+        "openai-compatible",
+        "NVIDIA_API_KEY",
+        "https://integrate.api.nvidia.com/v1",
+        "https://integrate.api.nvidia.com/v1/models",
         free_capable=True,
     ),
     ProviderDefinition(
-        "gemini", "Google Gemini", "gemini", "GEMINI_API_KEY",
+        "gemini",
+        "Google Gemini",
+        "gemini",
+        "GEMINI_API_KEY",
         "https://generativelanguage.googleapis.com/v1beta",
         "https://generativelanguage.googleapis.com/v1beta/models",
         free_capable=True,
     ),
     ProviderDefinition(
-        "cohere", "Cohere", "cohere", "COHERE_API_KEY",
-        "https://api.cohere.com", free_capable=True,
+        "cohere",
+        "Cohere",
+        "cohere",
+        "COHERE_API_KEY",
+        "https://api.cohere.com",
+        free_capable=True,
     ),
     ProviderDefinition(
-        "huggingface", "Hugging Face", "openai-compatible", "HUGGINGFACE_API_KEY",
-        "https://router.huggingface.co/v1", "https://router.huggingface.co/v1/models",
+        "huggingface",
+        "Hugging Face",
+        "openai-compatible",
+        "HUGGINGFACE_API_KEY",
+        "https://router.huggingface.co/v1",
+        "https://router.huggingface.co/v1/models",
         free_capable=True,
     ),
 )
@@ -85,8 +130,10 @@ ACCOUNTS_FILE = Path(
     os.environ.get("FLOSSWARE_ACCOUNTS_FILE", ROOT / "config" / "accounts.toml")
 )
 
+
 def provider_definitions() -> list[dict[str, Any]]:
     return [asdict(provider) for provider in PROVIDERS]
+
 
 def _provider(provider_id: str) -> ProviderDefinition:
     provider = next((item for item in PROVIDERS if item.id == provider_id), None)
@@ -94,8 +141,10 @@ def _provider(provider_id: str) -> ProviderDefinition:
         raise ValueError(f"unknown provider: {provider_id}")
     return provider
 
+
 def _configured(value: str | None) -> bool:
     return bool(value and os.environ.get(value))
+
 
 def _configured_accounts() -> list[Account]:
     accounts: list[Account] = []
@@ -140,8 +189,10 @@ def _configured_accounts() -> list[Account]:
             )
     return accounts
 
+
 def discover_accounts() -> list[dict[str, Any]]:
     return [asdict(account) for account in _configured_accounts() if account.configured]
+
 
 def _account(account: str | dict[str, Any]) -> Account:
     accounts = _configured_accounts()
@@ -158,11 +209,13 @@ def _account(account: str | dict[str, Any]) -> Account:
             return item
     raise ValueError(f"unknown account: {account}")
 
+
 def _credential(account: Account) -> str | None:
     prefix = "environment:"
     if account.credential_source.startswith(prefix):
-        return os.environ.get(account.credential_source[len(prefix):])
+        return os.environ.get(account.credential_source[len(prefix) :])
     return None
+
 
 def _headers(provider: ProviderDefinition, key: str) -> dict[str, str]:
     if provider.id == "gemini":
@@ -171,13 +224,18 @@ def _headers(provider: ProviderDefinition, key: str) -> dict[str, str]:
         return {"x-api-key": key, "anthropic-version": "2023-06-01"}
     return {"Authorization": f"Bearer {key}"}
 
+
 def _request_json(url: str, headers: dict[str, str], timeout: float) -> Any:
     request = urllib.request.Request(url, headers=headers)
     # URLs originate from the static PROVIDERS table, not user input.
     with urllib.request.urlopen(request, timeout=timeout) as response:  # nosec B310
         return json.load(response)
 
-def discover_identity(account: str | dict[str, Any], timeout: float = 8.0) -> dict[str, Any]:
+
+def discover_identity(
+    account: str | dict[str, Any],
+    timeout: float = 8.0,
+) -> dict[str, Any]:
     item = _account(account)
     provider = _provider(item.provider)
     key = _credential(item)
@@ -214,10 +272,15 @@ def discover_identity(account: str | dict[str, Any], timeout: float = 8.0) -> di
     result.update(identity=safe, identity_status="verified")
     return result
 
+
 def discover_identities(timeout: float = 8.0) -> list[dict[str, Any]]:
     return [discover_identity(account, timeout) for account in discover_accounts()]
 
-def discover_models(account: str | dict[str, Any], timeout: float = 8.0) -> list[dict[str, Any]]:
+
+def discover_models(
+    account: str | dict[str, Any],
+    timeout: float = 8.0,
+) -> list[dict[str, Any]]:
     item = _account(account)
     provider = _provider(item.provider)
     key = _credential(item)
@@ -233,7 +296,11 @@ def discover_models(account: str | dict[str, Any], timeout: float = 8.0) -> list
         json.JSONDecodeError,
     ):
         return []
-    raw_models = payload.get("models", []) if provider.id == "gemini" else payload.get("data", [])
+    raw_models = (
+        payload.get("models", [])
+        if provider.id == "gemini"
+        else payload.get("data", [])
+    )
     models: list[dict[str, Any]] = []
     for model in raw_models:
         if not isinstance(model, dict):
@@ -251,6 +318,7 @@ def discover_models(account: str | dict[str, Any], timeout: float = 8.0) -> list
                 }
             )
     return models
+
 
 def discover_all_models(timeout: float = 8.0) -> list[dict[str, Any]]:
     models: list[dict[str, Any]] = []
