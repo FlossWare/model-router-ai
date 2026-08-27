@@ -38,8 +38,12 @@ class ProviderRouter:
         self._stats: dict[str, _EndpointStats] = {}
         self._initialized = False
 
-    def add_provider(self, provider: _BaseProvider, api_key: str,
-                     account_name: str = "default") -> None:
+    def add_provider(
+        self,
+        provider: _BaseProvider,
+        api_key: str,
+        account_name: str = "default",
+    ) -> None:
         """Register a provider credential as a distinct worker account."""
         self._providers.append((provider, api_key, account_name))
         self._initialized = False
@@ -49,30 +53,47 @@ class ProviderRouter:
 
         self._models.clear()
         self._workers.clear()
-        tasks = [self._discover(provider, api_key, account_name)
-                 for provider, api_key, account_name in self._providers]
+        tasks = [
+            self._discover(provider, api_key, account_name)
+            for provider, api_key, account_name in self._providers
+        ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for provider_tuple, result in zip(self._providers, results):
             provider, _, account_name = provider_tuple
             if isinstance(result, BaseException):
-                logger.warning("Discovery failed for %s/%s: %s", provider.name, account_name, result)
+                logger.warning(
+                    "Discovery failed for %s/%s: %s",
+                    provider.name,
+                    account_name,
+                    result,
+                )
             elif isinstance(result, list):
                 self._models.extend(result)
 
         for model in self._models:
             provider = self._find_provider(model.provider, model.account_name)
             if provider is not None:
-                self._workers[self._endpoint_key(model)] = ModelWorker(provider, model, model.api_key)
+                self._workers[self._endpoint_key(model)] = ModelWorker(
+                    provider, model, model.api_key
+                )
 
         if not self._models:
             logger.warning("No models discovered from any provider/account")
             return
 
         self._initialized = True
-        logger.info("Discovered %d models across %d worker endpoints", len(self._models), len(self._workers))
+        logger.info(
+            "Discovered %d models across %d worker endpoints",
+            len(self._models),
+            len(self._workers),
+        )
 
-    async def _discover(self, provider: _BaseProvider, api_key: str,
-                        account_name: str) -> list[ModelInfo]:
+    async def _discover(
+        self,
+        provider: _BaseProvider,
+        api_key: str,
+        account_name: str,
+    ) -> list[ModelInfo]:
         models = await provider.discover_models(api_key)
         for model in models:
             model.account_name = account_name
@@ -89,11 +110,16 @@ class ProviderRouter:
         return self._stats[key]
 
     def _select_models(self, model_filter: str | None = None) -> list[ModelInfo]:
-        candidates = [m for m in self._models
-                      if self._workers.get(self._endpoint_key(m)) is not None
-                      and self._workers[self._endpoint_key(m)].available()]
+        candidates = [
+            m
+            for m in self._models
+            if self._workers.get(self._endpoint_key(m)) is not None
+            and self._workers[self._endpoint_key(m)].available()
+        ]
         if model_filter:
-            exact_address = [m for m in candidates if self._endpoint_key(m) == model_filter]
+            exact_address = [
+                m for m in candidates if self._endpoint_key(m) == model_filter
+            ]
             if exact_address:
                 candidates = exact_address
             else:
@@ -117,23 +143,44 @@ class ProviderRouter:
 
         return sorted(candidates, key=_score, reverse=True)
 
-    def _record(self, model: ModelInfo, success: bool, latency_s: float = 0.0) -> None:
+    def _record(
+        self,
+        model: ModelInfo,
+        success: bool,
+        latency_s: float = 0.0,
+    ) -> None:
         stats = self._get_stats(model)
         if success:
             stats.successes += 1
         else:
             stats.failures += 1
-        self._strategy.record(success=success, endpoint_key=self._endpoint_key(model), latency_s=latency_s)
+        self._strategy.record(
+            success=success,
+            endpoint_key=self._endpoint_key(model),
+            latency_s=latency_s,
+        )
 
-    def _find_provider(self, provider_name: str, account_name: str = "") -> _BaseProvider | None:
+    def _find_provider(
+        self,
+        provider_name: str,
+        account_name: str = "",
+    ) -> _BaseProvider | None:
         for provider, _, account in self._providers:
-            if provider.name == provider_name and (not account_name or account == account_name):
+            if provider.name == provider_name and (
+                not account_name or account == account_name
+            ):
                 return provider
         return None
 
-    async def chat(self, messages: list[ChatMessage], *, model: str | None = None,
-                   account: str | None = None, temperature: float = 0.7,
-                   max_tokens: int | None = None) -> ChatResponse:
+    async def chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        model: str | None = None,
+        account: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+    ) -> ChatResponse:
         """Route through available workers, failing over per account/model."""
         if not self._initialized:
             await self.initialize()
@@ -179,17 +226,20 @@ class ProviderRouter:
     def worker_status(self) -> dict[str, dict[str, Any]]:
         """Return health/quota state for each concrete worker."""
         return {
-            key: {"available": worker.available(), "unavailable_until": worker.unavailable_until}
+            key: {
+                "available": worker.available(),
+                "unavailable_until": worker.unavailable_until,
+            }
             for key, worker in self._workers.items()
         }
 
     def stats(self) -> dict[str, dict]:
         result: dict[str, dict] = {}
-        for key, s in self._stats.items():
-            total = s.successes + s.failures
+        for key, stats in self._stats.items():
+            total = stats.successes + stats.failures
             result[key] = {
-                "successes": s.successes,
-                "failures": s.failures,
-                "success_rate": s.successes / total if total > 0 else 0.0,
+                "successes": stats.successes,
+                "failures": stats.failures,
+                "success_rate": stats.successes / total if total > 0 else 0.0,
             }
         return result
