@@ -32,7 +32,9 @@ class FakeProvider(_BaseProvider):
 
 @pytest.mark.asyncio
 async def test_router_uses_second_account_after_quota_failure():
-    first = FakeProvider("test", ['HTTP 429: {"message":"free-models-per-day"}'])
+    first = FakeProvider(
+        "test", [RuntimeError('HTTP 429: {"message":"free-models-per-day"}')]
+    )
     second = FakeProvider("test", ["SECOND_OK"])
     router = ProviderRouter(strategy=PreferFirst())
     router.add_provider(first, "key-a", account_name="account-a")
