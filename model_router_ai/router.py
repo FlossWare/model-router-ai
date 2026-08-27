@@ -1,19 +1,20 @@
 """Base ProviderRouter — the foundation that talks to LLM providers.
 
-Handles provider registration, account-aware model discovery, endpoint selection,
-and raw chat() calls. Decorators wrap this to add cost awareness, budget tracking,
-policy enforcement, etc.
+The router keeps the public API stable while representing every executable
+provider/account/model combination as an independent worker.  This lets an
+exhausted account fail independently and gives higher-level policies a clean
+worker pool to select from.
 """
 
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
 from model_router_ai.providers import _BaseProvider
 from model_router_ai.strategies import SelectionStrategy, ThompsonSamplingStrategy
 from model_router_ai.types import ChatMessage, ChatResponse, ModelInfo
+from model_router_ai.workers import Arbiter, Worker, WorkerPool
 
 logger = logging.getLogger(__name__)
 
@@ -27,23 +28,26 @@ class _EndpointStats:
 
 
 class ProviderRouter:
-    """Base model router with first-class multi-account endpoints.
+    """Base model router with first-class provider/account/model workers."""
 
-    A provider may have multiple independent accounts. ``account_name`` is
-    therefore part of endpoint identity and is preserved on every discovered
-    ``ModelInfo``. Credentials remain in the caller's credential source and
-    are never persisted by the router.
-    """
-
-    def __init__(
-        self,
-        strategy: SelectionStrategy | None = None,
-    ) -> None:
+    def __init__(self, strategy: SelectionStrategy | None = None) -> None:
         self._strategy = strategy or ThompsonSamplingStrategy()
         self._providers: list[tuple[_BaseProvider, str, str]] = []
         self._models: list[ModelInfo] = []
         self._stats: dict[str, _EndpointStats] = {}
+        self._workers = WorkerPool()
+        self._arbiter = Arbiter(self._workers, scorer=self._worker_score)
         self._initialized = False
+
+    @property
+    def worker_pool(self) -> WorkerPool:
+        """Return the live worker pool for inspection and advanced policies."""
+        return self._workers
+
+    @property
+    def arbiter(self) -> Arbiter:
+        """Return the worker arbiter used by this router."""
+        return self._arbiter
 
     def add_provider(
         self,
@@ -59,24 +63,36 @@ class ProviderRouter:
         import asyncio
 
         self._models.clear()
-        tasks = [self._discover(provider, api_key, account_name)
-                 for provider, api_key, account_name in self._providers]
-
+        self._workers = WorkerPool()
+        self._arbiter = Arbiter(self._workers, scorer=self._worker_score)
+        tasks = [
+            self._discover(provider, api_key, account_name)
+            for provider, api_key, account_name in self._providers
+        ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for provider_tuple, result in zip(self._providers, results):
             provider, _, account_name = provider_tuple
             if isinstance(result, BaseException):
-                logger.warning("Discovery failed for %s/%s: %s", provider.name, account_name, result)
+                logger.warning(
+                    "Discovery failed for %s/%s: %s", provider.name, account_name, result
+                )
             elif isinstance(result, list):
                 self._models.extend(result)
 
+        for model in self._models:
+            provider = self._find_provider(model.provider, model.account_name)
+            if provider is not None:
+                self._workers.add(Worker(provider, model.account_name, model))
+
+        self._initialized = True
         if not self._models:
             logger.warning("No models discovered from any provider/account")
             return
 
-        self._initialized = True
-        endpoints = {self._endpoint_key(m) for m in self._models}
-        logger.info("Discovered %d models across %d provider accounts", len(self._models), len(endpoints))
+        logger.info(
+            "Discovered %d models across %d workers",
+            len(self._models), len(self._workers.all()),
+        )
 
     async def _discover(
         self, provider: _BaseProvider, api_key: str, account_name: str
@@ -96,13 +112,9 @@ class ProviderRouter:
             self._stats[key] = _EndpointStats()
         return self._stats[key]
 
-    def _select_models(
-        self, model_filter: str | None = None
-    ) -> list[ModelInfo]:
+    def _select_models(self, model_filter: str | None = None) -> list[ModelInfo]:
         candidates = self._models
         if model_filter:
-            # Accept provider/account/model addressing as well as the legacy
-            # model-id-only form. This makes duplicate models deterministic.
             exact_address = [m for m in candidates if self._endpoint_key(m) == model_filter]
             if exact_address:
                 candidates = exact_address
@@ -114,19 +126,20 @@ class ProviderRouter:
                     partial = [m for m in candidates if model_filter in m.model_id]
                     if partial:
                         candidates = partial
+        return sorted(candidates, key=self._model_score, reverse=True)
 
-        def _score(m: ModelInfo) -> float:
-            stats = self._get_stats(m)
-            key = self._endpoint_key(m)
-            return self._strategy.score(
-                successes=stats.successes,
-                failures=stats.failures,
-                model_id=m.model_id,
-                provider=m.provider,
-                endpoint_key=key,
-            )
+    def _model_score(self, model: ModelInfo) -> float:
+        stats = self._get_stats(model)
+        return self._strategy.score(
+            successes=stats.successes,
+            failures=stats.failures,
+            model_id=model.model_id,
+            provider=model.provider,
+            endpoint_key=self._endpoint_key(model),
+        )
 
-        return sorted(candidates, key=_score, reverse=True)
+    def _worker_score(self, worker: Worker) -> float:
+        return self._model_score(worker.model)
 
     def _record(self, model: ModelInfo, success: bool, latency_s: float = 0.0) -> None:
         stats = self._get_stats(model)
@@ -134,8 +147,11 @@ class ProviderRouter:
             stats.successes += 1
         else:
             stats.failures += 1
-        key = self._endpoint_key(model)
-        self._strategy.record(success=success, endpoint_key=key, latency_s=latency_s)
+        self._strategy.record(
+            success=success,
+            endpoint_key=self._endpoint_key(model),
+            latency_s=latency_s,
+        )
 
     def _find_provider(self, provider_name: str, account_name: str = "") -> _BaseProvider | None:
         for provider, _, account in self._providers:
@@ -152,44 +168,44 @@ class ProviderRouter:
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> ChatResponse:
-        """Route a request, optionally constrained to a named account."""
+        """Route a request through independently managed workers."""
         if not self._initialized:
             await self.initialize()
 
-        candidates = self._select_models(model)
-        if account:
-            candidates = [m for m in candidates if m.account_name == account]
+        model_candidates = self._select_models(model)
+        allowed = {self._endpoint_key(m) for m in model_candidates}
+        candidates = [
+            worker for worker in self._workers.available(account=account)
+            if worker.worker_id in allowed
+        ]
+        candidates.sort(key=self._worker_score, reverse=True)
+
         if not candidates:
             raise RuntimeError("No model endpoints available for the requested account/model")
 
         last_err: Exception | None = None
-        for model_info in candidates:
-            provider = self._find_provider(model_info.provider, model_info.account_name)
-            if provider is None:
-                continue
+        for worker in candidates:
+            result = await worker.execute(
+                messages, temperature=temperature, max_tokens=max_tokens
+            )
+            if result.response is not None:
+                self._record(worker.model, True, result.latency_ms / 1000.0)
+                response = result.response
+                if worker.model.cost:
+                    input_tokens = response.usage.get("prompt_tokens", 0)
+                    output_tokens = response.usage.get("completion_tokens", 0)
+                    response.cost_usd = worker.model.cost.estimate(input_tokens, output_tokens)
+                response.provider = worker.model.provider
+                response.model = worker.model.model_id
+                return response
 
-            t0 = time.monotonic()
-            try:
-                resp = await provider.call(model_info, messages, temperature, max_tokens)
-                if not resp.content:
-                    raise RuntimeError("Empty response")
-                elapsed = time.monotonic() - t0
-                self._record(model_info, True, elapsed)
-                resp.latency_ms = elapsed * 1000
+            self._record(worker.model, False, result.latency_ms / 1000.0)
+            last_err = RuntimeError(
+                f"{worker.worker_id}: {result.status.value}: {result.error}"
+            )
+            logger.debug("Worker failed %s: %s", worker.worker_id, result.error)
 
-                if model_info.cost:
-                    input_tokens = resp.usage.get("prompt_tokens", 0)
-                    output_tokens = resp.usage.get("completion_tokens", 0)
-                    resp.cost_usd = model_info.cost.estimate(input_tokens, output_tokens)
-                resp.provider = model_info.provider
-                resp.model = model_info.model_id
-                return resp
-            except Exception as exc:
-                self._record(model_info, False, time.monotonic() - t0)
-                last_err = exc
-                logger.debug("Failed %s: %s", self._endpoint_key(model_info), exc)
-
-        raise RuntimeError(f"All {len(candidates)} endpoints failed. Last: {last_err}")
+        raise RuntimeError(f"All {len(candidates)} workers failed. Last: {last_err}")
 
     async def list_models(self, account: str | None = None) -> list[ModelInfo]:
         if not self._initialized:
@@ -198,8 +214,8 @@ class ProviderRouter:
             return [m for m in self._models if m.account_name == account]
         return list(self._models)
 
-    def stats(self) -> dict[str, dict]:
-        result: dict[str, dict] = {}
+    def stats(self) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
         for key, s in self._stats.items():
             total = s.successes + s.failures
             result[key] = {
