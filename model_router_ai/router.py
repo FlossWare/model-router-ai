@@ -77,11 +77,11 @@ class ProviderRouter:
                     provider, model, model.api_key
                 )
 
+        self._initialized = True
         if not self._models:
             logger.warning("No models discovered from any provider/account")
             return
 
-        self._initialized = True
         logger.info(
             "Discovered %d models across %d worker endpoints",
             len(self._models),
@@ -229,6 +229,8 @@ class ProviderRouter:
             key: {
                 "available": worker.available(),
                 "unavailable_until": worker.unavailable_until,
+                "last_status": worker.last_status.value if worker.last_status else None,
+                "last_error": worker.last_error,
             }
             for key, worker in self._workers.items()
         }
