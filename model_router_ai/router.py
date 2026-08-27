@@ -7,6 +7,7 @@ Decorators wrap the router to add cost awareness, budgets, policy, etc.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -49,8 +50,6 @@ class ProviderRouter:
         self._initialized = False
 
     async def initialize(self) -> None:
-        import asyncio
-
         self._models.clear()
         self._workers.clear()
         tasks = [
@@ -71,10 +70,10 @@ class ProviderRouter:
                 self._models.extend(result)
 
         for model in self._models:
-            provider = self._find_provider(model.provider, model.account_name)
-            if provider is not None:
+            found_provider = self._find_provider(model.provider, model.account_name)
+            if found_provider is not None:
                 self._workers[self._endpoint_key(model)] = ModelWorker(
-                    provider, model, model.api_key
+                    found_provider, model, model.api_key
                 )
 
         self._initialized = True
@@ -189,7 +188,9 @@ class ProviderRouter:
         if account:
             candidates = [m for m in candidates if m.account_name == account]
         if not candidates:
-            raise RuntimeError("No model endpoints available for the requested account/model")
+            raise RuntimeError(
+                "No model endpoints available for the requested account/model"
+            )
 
         last_err: Exception | None = None
         for model_info in candidates:
