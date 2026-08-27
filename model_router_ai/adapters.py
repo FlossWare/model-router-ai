@@ -7,6 +7,7 @@ classes in budget-ai / strategy-ai.
 
 from __future__ import annotations
 
+import importlib
 from typing import Any, Protocol, cast
 
 from model_router_ai.types import BudgetStatus, UsageInfo
@@ -38,15 +39,17 @@ class BudgetAIAdapter:
         cost_usd: float,
         usage: UsageInfo | None = None,
     ) -> None:
+        del cost_usd
         try:
-            from budget_ai.types import TokenUsage
-        except ImportError as exc:
+            budget_types = importlib.import_module("budget_ai.types")
+            token_usage_type = budget_types.TokenUsage
+        except (ImportError, AttributeError) as exc:
             raise ImportError(
                 "budget-ai must be installed to use BudgetAIAdapter: "
                 "pip install budget-ai"
             ) from exc
 
-        token_usage = TokenUsage(
+        token_usage = token_usage_type(
             prompt_tokens=(usage or {}).get("prompt_tokens", 0),
             completion_tokens=(usage or {}).get("completion_tokens", 0),
             total_tokens=(usage or {}).get("total_tokens", 0),
