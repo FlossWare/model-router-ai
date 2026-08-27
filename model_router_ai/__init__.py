@@ -14,15 +14,16 @@ from model_router_ai.decorators import CostAware, BudgetGuard, PolicyGuard, Late
 from model_router_ai.strategies import ThompsonSamplingStrategy, RoundRobinStrategy, LatencyWeightedStrategy, CascadeStrategy
 from model_router_ai.adapters import BudgetAIAdapter, StrategyAIAdapter
 from model_router_ai.discovery import Account, ProviderDefinition, discover_accounts, discover_all_models, discover_models, provider_definitions
+from model_router_ai.workers import Arbiter, Worker, WorkerPool, WorkerResult, WorkerStatus
 
-__version__ = "0.1"
+__version__ = "0.2"
 
 __all__ = [
-    "Account", "BudgetAIAdapter", "BudgetGuard", "BudgetStatus", "CascadeStrategy", "ChatMessage",
+    "Account", "Arbiter", "BudgetAIAdapter", "BudgetGuard", "BudgetStatus", "CascadeStrategy", "ChatMessage",
     "ChatResponse", "CohereProvider", "CostAware", "GeminiProvider", "LatencyOptimizer",
     "LatencyWeightedStrategy", "ModelCost", "ModelInfo", "ModelRouter", "ModelSelector",
     "OpenAICompatProvider", "PolicyGuard", "ProviderDefinition", "ProviderRouter", "RoundRobinStrategy",
     "StrategyAIAdapter", "ThompsonSamplingSelector", "ThompsonSamplingStrategy", "UsageInfo",
-    "UsageTracker", "VertexAIProvider", "discover_accounts", "discover_all_models", "discover_models",
-    "provider_definitions",
+    "UsageTracker", "VertexAIProvider", "Worker", "WorkerPool", "WorkerResult", "WorkerStatus",
+    "discover_accounts", "discover_all_models", "discover_models", "provider_definitions",
 ]
