@@ -21,6 +21,9 @@ class WorkerStatus(StrEnum):
     QUOTA_EXHAUSTED = "quota_exhausted"
     AUTH_FAILED = "auth_failed"
     MODEL_UNAVAILABLE = "model_unavailable"
+    TIMEOUT = "timeout"
+    NETWORK_ERROR = "network_error"
+    INVALID_REQUEST = "invalid_request"
     FAILED = "failed"
 
 
@@ -53,6 +56,14 @@ class ModelWorker:
     def unavailable_until(self) -> float:
         return self._unavailable_until
 
+    @property
+    def last_status(self) -> WorkerStatus | None:
+        return self._last_status
+
+    @property
+    def last_error(self) -> str:
+        return self._last_error
+
     def available(self, now: float | None = None) -> bool:
         current = time.time() if now is None else now
         return current >= self._unavailable_until
@@ -68,7 +79,7 @@ class ModelWorker:
         if reset is not None:
             until = reset
         else:
-            default_delay = 86400 if status is WorkerStatus.QUOTA_EXHAUSTED else 60
+            default_delay = 86400 if status is WorkerStatus.QUOTA_EXHAUSTED else 300
             until = time.time() + max(retry_after or default_delay, 1)
         self._unavailable_until = max(time.time() + 0.001, until)
         self._last_status = status
@@ -87,7 +98,7 @@ class ModelWorker:
     ) -> WorkerResult:
         if not self.available():
             return WorkerResult(
-                status=self._last_status or WorkerStatus.QUOTA_EXHAUSTED,
+                status=self._last_status or WorkerStatus.FAILED,
                 error=self._last_error or "worker temporarily unavailable",
                 quota_reset=self._unavailable_until,
             )
@@ -100,13 +111,12 @@ class ModelWorker:
         except Exception as exc:
             error = str(exc)
             status, retry_after, quota_reset = classify_failure(error)
-            if status in (WorkerStatus.RATE_LIMITED, WorkerStatus.QUOTA_EXHAUSTED):
-                self.mark_unavailable(
-                    status,
-                    reset=quota_reset,
-                    retry_after=retry_after,
-                    error=error,
-                )
+            self.mark_unavailable(
+                status,
+                reset=quota_reset,
+                retry_after=retry_after,
+                error=error,
+            )
             return WorkerResult(
                 status=status,
                 error=error,
@@ -116,7 +126,7 @@ class ModelWorker:
 
 
 def classify_failure(error: str) -> tuple[WorkerStatus, float | None, float | None]:
-    """Classify provider exceptions and recover OpenRouter reset metadata."""
+    """Classify provider exceptions and recover common rate-limit metadata."""
     lowered = error.lower()
     status_code = _first_int(r"\bHTTP\s+(\d{3})\b", error)
     retry_after = _first_float(
@@ -136,6 +146,12 @@ def classify_failure(error: str) -> tuple[WorkerStatus, float | None, float | No
         return WorkerStatus.AUTH_FAILED, retry_after, quota_reset
     if status_code in (404, 410):
         return WorkerStatus.MODEL_UNAVAILABLE, retry_after, quota_reset
+    if "timeout" in lowered:
+        return WorkerStatus.TIMEOUT, retry_after, quota_reset
+    if status_code == 400 or "invalid request" in lowered:
+        return WorkerStatus.INVALID_REQUEST, retry_after, quota_reset
+    if "connection" in lowered or "network" in lowered:
+        return WorkerStatus.NETWORK_ERROR, retry_after, quota_reset
     return WorkerStatus.FAILED, retry_after, quota_reset
 
 
