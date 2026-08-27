@@ -1,6 +1,6 @@
 """Worker primitives for provider/account/model routing.
 
-A worker is one concrete provider + account + model route.  Health and quota
+A worker is one concrete provider + account + model route. Health and quota
 state belongs to that route, never to the provider globally.
 """
 
@@ -10,7 +10,6 @@ import re
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
 
 from model_router_ai.providers import _BaseProvider
 from model_router_ai.types import ChatMessage, ChatResponse, ModelInfo
@@ -55,14 +54,16 @@ class ModelWorker:
         return self._unavailable_until
 
     def available(self, now: float | None = None) -> bool:
-        return (now or time.time()) >= self._unavailable_until
+        current = time.time() if now is None else now
+        return current >= self._unavailable_until
 
     def mark_unavailable(self, status: WorkerStatus, *, reset: float | None = None,
                          retry_after: float | None = None, error: str = "") -> None:
         if reset is not None:
             until = reset
         else:
-            until = time.time() + max(retry_after or (86400 if status is WorkerStatus.QUOTA_EXHAUSTED else 60), 1)
+            default_delay = 86400 if status is WorkerStatus.QUOTA_EXHAUSTED else 60
+            until = time.time() + max(retry_after or default_delay, 1)
         self._unavailable_until = max(time.time() + 0.001, until)
         self._last_status = status
         self._last_error = error
@@ -81,11 +82,9 @@ class ModelWorker:
                 quota_reset=self._unavailable_until,
             )
         try:
-            # The provider uses the key carried by ModelInfo.  Keeping the
-            # worker's account identity separate lets multiple credentials for
-            # one provider coexist without shared health state.
-            model = self.model
-            response = await self.provider.call(model, messages, temperature, max_tokens)
+            response = await self.provider.call(self.model, messages, temperature, max_tokens)
+            if not response.content:
+                raise RuntimeError("Empty response")
             self.mark_available()
             return WorkerResult(status=WorkerStatus.SUCCESS, response=response)
         except Exception as exc:
