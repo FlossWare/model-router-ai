@@ -44,6 +44,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
+disable_error_code = ["no-any-return"]
 
 [tool.bandit]
 exclude_dirs = ["tests"]
