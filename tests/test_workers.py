@@ -33,7 +33,11 @@ def test_classifies_timeout_and_network_failures():
 
 def test_worker_identity_is_account_specific():
     provider = OpenAICompatProvider("openrouter")
-    model = ModelInfo(model_id="qwen/test", provider="openrouter", account_name="ncrr")
+    model = ModelInfo(
+        model_id="qwen/test",
+        provider="openrouter",
+        account_name="ncrr",
+    )
     worker = ModelWorker(provider, model, "secret")
     assert worker.id == "openrouter/ncrr/qwen/test"
     assert worker.available()
@@ -41,7 +45,11 @@ def test_worker_identity_is_account_specific():
 
 def test_quota_worker_becomes_unavailable_until_reset():
     provider = OpenAICompatProvider("openrouter")
-    model = ModelInfo(model_id="qwen/test", provider="openrouter", account_name="ncrr")
+    model = ModelInfo(
+        model_id="qwen/test",
+        provider="openrouter",
+        account_name="ncrr",
+    )
     worker = ModelWorker(provider, model, "secret")
     worker.mark_unavailable(WorkerStatus.QUOTA_EXHAUSTED, reset=1787875200.0)
     assert not worker.available(now=1787875199.0)
@@ -50,7 +58,11 @@ def test_quota_worker_becomes_unavailable_until_reset():
 
 def test_auth_worker_is_quarantined():
     provider = OpenAICompatProvider("openrouter")
-    model = ModelInfo(model_id="qwen/test", provider="openrouter", account_name="ncrr")
+    model = ModelInfo(
+        model_id="qwen/test",
+        provider="openrouter",
+        account_name="ncrr",
+    )
     worker = ModelWorker(provider, model, "secret")
     worker.mark_unavailable(WorkerStatus.AUTH_FAILED)
     assert not worker.available()
@@ -65,17 +77,34 @@ class FakeProvider(_BaseProvider):
         self.calls = 0
 
     async def discover_models(self, api_key):
-        return [ModelInfo(model_id=m, provider=self.name, api_key=api_key) for m in self.models]
+        return [
+            ModelInfo(model_id=model, provider=self.name, api_key=api_key)
+            for model in self.models
+        ]
 
-    async def call(self, model_info, messages, temperature=0.7, max_tokens=None):
+    async def call(
+        self,
+        model_info,
+        messages,
+        temperature=0.7,
+        max_tokens=None,
+    ):
         self.calls += 1
         if self.failures:
             raise RuntimeError(self.failures.pop(0))
-        return ChatResponse(content="BASELINE_OK", model=model_info.model_id, provider=self.name)
+        return ChatResponse(
+            content="BASELINE_OK",
+            model=model_info.model_id,
+            provider=self.name,
+        )
 
 
 def test_router_fails_over_between_accounts():
-    exhausted = FakeProvider("openrouter", ["qwen/test"], ["HTTP 429 quota exhausted"])
+    exhausted = FakeProvider(
+        "openrouter",
+        ["qwen/test"],
+        ["HTTP 429 quota exhausted"],
+    )
     healthy = FakeProvider("openrouter", ["qwen/test"])
     router = ProviderRouter()
     router.add_provider(exhausted, "key-a", "flossware")
@@ -93,8 +122,16 @@ def test_router_fails_over_between_accounts():
 
 
 def test_router_all_workers_exhausted():
-    first = FakeProvider("openrouter", ["qwen/test"], ["HTTP 429 quota exhausted"])
-    second = FakeProvider("openrouter", ["qwen/test"], ["HTTP 429 quota exhausted"])
+    first = FakeProvider(
+        "openrouter",
+        ["qwen/test"],
+        ["HTTP 429 quota exhausted"],
+    )
+    second = FakeProvider(
+        "openrouter",
+        ["qwen/test"],
+        ["HTTP 429 quota exhausted"],
+    )
     router = ProviderRouter()
     router.add_provider(first, "key-a", "flossware")
     router.add_provider(second, "key-b", "ncrr")
