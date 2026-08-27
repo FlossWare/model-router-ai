@@ -2,10 +2,17 @@
 
 import pytest
 
+from model_router_ai.providers import _BaseProvider
 from model_router_ai.router import ProviderRouter
 from model_router_ai.types import ChatMessage, ChatResponse, ModelInfo
-from model_router_ai.workers import WorkerStatus
-from model_router_ai.providers import _BaseProvider
+
+
+class PreferFirst:
+    def score(self, *, successes, failures, **kwargs):
+        return 2.0 if kwargs.get("endpoint_key", "").endswith("account-a/test-model") else 1.0
+
+    def record(self, *, success, **kwargs):
+        pass
 
 
 class FakeProvider(_BaseProvider):
@@ -27,7 +34,7 @@ class FakeProvider(_BaseProvider):
 async def test_router_uses_second_account_after_quota_failure():
     first = FakeProvider("test", ['HTTP 429: {"message":"free-models-per-day"}'])
     second = FakeProvider("test", ["SECOND_OK"])
-    router = ProviderRouter()
+    router = ProviderRouter(strategy=PreferFirst())
     router.add_provider(first, "key-a", account_name="account-a")
     router.add_provider(second, "key-b", account_name="account-b")
 
