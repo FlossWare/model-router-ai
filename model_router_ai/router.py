@@ -62,8 +62,7 @@ class ProviderRouter:
         for model in self._models:
             provider = self._find_provider(model.provider, model.account_name)
             if provider is not None:
-                worker = ModelWorker(provider, model, model.api_key)
-                self._workers[self._endpoint_key(model)] = worker
+                self._workers[self._endpoint_key(model)] = ModelWorker(provider, model, model.api_key)
 
         if not self._models:
             logger.warning("No models discovered from any provider/account")
@@ -91,7 +90,7 @@ class ProviderRouter:
 
     def _select_models(self, model_filter: str | None = None) -> list[ModelInfo]:
         candidates = [m for m in self._models
-                      if self._workers.get(self._endpoint_key(m), None) is not None
+                      if self._workers.get(self._endpoint_key(m)) is not None
                       and self._workers[self._endpoint_key(m)].available()]
         if model_filter:
             exact_address = [m for m in candidates if self._endpoint_key(m) == model_filter]
@@ -150,7 +149,6 @@ class ProviderRouter:
             worker = self._workers.get(self._endpoint_key(model_info))
             if worker is None or not worker.available():
                 continue
-
             t0 = time.monotonic()
             result = await worker.execute(messages, temperature, max_tokens)
             elapsed = time.monotonic() - t0
@@ -165,7 +163,6 @@ class ProviderRouter:
                 resp.provider = model_info.provider
                 resp.model = model_info.model_id
                 return resp
-
             self._record(model_info, False, elapsed)
             last_err = RuntimeError(result.error or result.status.value)
             logger.debug("Worker %s failed: %s", worker.id, last_err)
@@ -175,21 +172,16 @@ class ProviderRouter:
     async def list_models(self, account: str | None = None) -> list[ModelInfo]:
         if not self._initialized:
             await self.initialize()
-        models = [m for m in self._models if self._workers.get(self._endpoint_key(m), None) is not None
-                  and self._workers[self._endpoint_key(m)].available()]
         if account:
-            models = [m for m in models if m.account_name == account]
-        return models
+            return [m for m in self._models if m.account_name == account]
+        return list(self._models)
 
     def worker_status(self) -> dict[str, dict[str, Any]]:
         """Return health/quota state for each concrete worker."""
-        result: dict[str, dict[str, Any]] = {}
-        for key, worker in self._workers.items():
-            result[key] = {
-                "available": worker.available(),
-                "unavailable_until": worker.unavailable_until,
-            }
-        return result
+        return {
+            key: {"available": worker.available(), "unavailable_until": worker.unavailable_until}
+            for key, worker in self._workers.items()
+        }
 
     def stats(self) -> dict[str, dict]:
         result: dict[str, dict] = {}
