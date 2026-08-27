@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 import pytest
@@ -29,12 +30,11 @@ class FakeProvider(_BaseProvider):
     async def call(self, model_info, messages, temperature=0.7, max_tokens=None):
         self.calls += 1
         if self.failures:
-            failure = self.failures.pop(0)
-            raise RuntimeError(failure)
+            raise RuntimeError(self.failures.pop(0))
         return ChatResponse(content="ok", model=model_info.model_id, provider=self.name)
 
 
-def worker(provider, account, model):
+def make_worker(provider, account, model):
     return Worker(
         provider=provider,
         account_name=account,
@@ -44,14 +44,14 @@ def worker(provider, account, model):
 
 def test_worker_identity_is_provider_account_model():
     provider = FakeProvider("openrouter", ["qwen"])
-    item = worker(provider, "flossware", "qwen")
+    item = make_worker(provider, "flossware", "qwen")
     assert item.worker_id == "openrouter/flossware/qwen"
 
 
 def test_worker_pool_filters_account_provider_and_model():
     p1 = FakeProvider("openrouter", ["qwen"])
     p2 = FakeProvider("groq", ["qwen"])
-    pool = WorkerPool([worker(p1, "a", "qwen"), worker(p2, "b", "qwen")])
+    pool = WorkerPool([make_worker(p1, "a", "qwen"), make_worker(p2, "b", "qwen")])
     assert [w.worker_id for w in pool.available(account="a")] == ["openrouter/a/qwen"]
     assert [w.worker_id for w in pool.available(provider="groq")] == ["groq/b/qwen"]
     assert [w.worker_id for w in pool.available(model="qwen")] == [
@@ -62,9 +62,12 @@ def test_worker_pool_filters_account_provider_and_model():
 
 def test_arbiter_selects_available_worker():
     provider = FakeProvider("local", ["qwen"])
-    first = worker(provider, "a", "qwen")
-    second = worker(provider, "b", "qwen")
-    arbiter = Arbiter(WorkerPool([first, second]), scorer=lambda w: 1.0 if w.account_name == "b" else 0.0)
+    first = make_worker(provider, "a", "qwen")
+    second = make_worker(provider, "b", "qwen")
+    arbiter = Arbiter(
+        WorkerPool([first, second]),
+        scorer=lambda w: 1.0 if w.account_name == "b" else 0.0,
+    )
     assert arbiter.select().account_name == "b"
 
 
@@ -79,26 +82,24 @@ def test_quota_error_is_classified_and_reset_is_honored():
     assert quota_reset >= time.time() + 50
 
 
-@pytest.mark.asyncio
-async def test_worker_marks_quota_exhausted_and_does_not_retry():
+def test_worker_marks_quota_exhausted_and_does_not_retry():
     provider = FakeProvider("openrouter", ["qwen"], ["HTTP 429 quota exhausted"])
-    item = worker(provider, "a", "qwen")
-    result = await item.execute([ChatMessage("user", "test")])
+    item = make_worker(provider, "a", "qwen")
+    result = asyncio.run(item.execute([ChatMessage("user", "test")]))
     assert result.status is WorkerStatus.QUOTA_EXHAUSTED
     assert item.available is False
     assert provider.calls == 1
 
 
-@pytest.mark.asyncio
-async def test_router_fails_over_between_accounts():
+def test_router_fails_over_between_accounts():
     exhausted = FakeProvider("openrouter", ["qwen"], ["HTTP 429 quota exhausted"])
     healthy = FakeProvider("openrouter", ["qwen"])
     router = ProviderRouter()
     router.add_provider(exhausted, "key-a", "flossware")
     router.add_provider(healthy, "key-b", "ncrr")
-    await router.initialize()
+    asyncio.run(router.initialize())
 
-    response = await router.chat([ChatMessage("user", "test")], model="qwen")
+    response = asyncio.run(router.chat([ChatMessage("user", "test")], model="qwen"))
     assert response.content == "ok"
     assert exhausted.calls == 1
     assert healthy.calls == 1
@@ -106,25 +107,24 @@ async def test_router_fails_over_between_accounts():
     assert router.worker_pool.available(account="ncrr")
 
 
-@pytest.mark.asyncio
-async def test_router_all_workers_unavailable():
+def test_router_all_workers_unavailable():
     p1 = FakeProvider("openrouter", ["qwen"], ["HTTP 429 quota exhausted"])
     p2 = FakeProvider("openrouter", ["qwen"], ["HTTP 429 quota exhausted"])
     router = ProviderRouter()
     router.add_provider(p1, "key-a", "flossware")
     router.add_provider(p2, "key-b", "ncrr")
-    await router.initialize()
+    asyncio.run(router.initialize())
 
-    with pytest.raises(RuntimeError, match="No model endpoints available"):
-        await router.chat([ChatMessage("user", "test")], model="qwen")
+    with pytest.raises(RuntimeError, match="All 2 workers failed"):
+        asyncio.run(router.chat([ChatMessage("user", "test")], model="qwen"))
     assert p1.calls == 1
     assert p2.calls == 1
+    assert router.worker_pool.available() == []
 
 
-@pytest.mark.asyncio
-async def test_router_with_zero_workers_is_valid():
+def test_router_with_zero_workers_is_valid():
     router = ProviderRouter()
-    await router.initialize()
+    asyncio.run(router.initialize())
     assert router.worker_pool.all() == []
     with pytest.raises(RuntimeError, match="No model endpoints available"):
-        await router.chat([ChatMessage("user", "test")])
+        asyncio.run(router.chat([ChatMessage("user", "test")]))
