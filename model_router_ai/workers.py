@@ -81,7 +81,7 @@ class ModelWorker:
         else:
             default_delay = 86400 if status is WorkerStatus.QUOTA_EXHAUSTED else 300
             until = time.time() + max(retry_after or default_delay, 1)
-        self._unavailable_until = max(time.time() + 0.001, until)
+        self._unavailable_until = until
         self._last_status = status
         self._last_error = error
 
