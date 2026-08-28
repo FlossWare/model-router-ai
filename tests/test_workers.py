@@ -6,6 +6,7 @@ import pytest
 
 from model_router_ai.providers import OpenAICompatProvider, _BaseProvider
 from model_router_ai.router import ProviderRouter
+from model_router_ai.strategies import RoundRobinStrategy
 from model_router_ai.types import ChatMessage, ChatResponse, ModelInfo
 from model_router_ai.workers import ModelWorker, WorkerStatus, classify_failure
 
@@ -106,7 +107,7 @@ def test_router_fails_over_between_accounts():
         ["HTTP 429 quota exhausted"],
     )
     healthy = FakeProvider("openrouter", ["qwen/test"])
-    router = ProviderRouter()
+    router = ProviderRouter(strategy=RoundRobinStrategy())
     router.add_provider(exhausted, "key-a", "flossware")
     router.add_provider(healthy, "key-b", "ncrr")
     asyncio.run(router.initialize())
@@ -132,7 +133,7 @@ def test_router_all_workers_exhausted():
         ["qwen/test"],
         ["HTTP 429 quota exhausted"],
     )
-    router = ProviderRouter()
+    router = ProviderRouter(strategy=RoundRobinStrategy())
     router.add_provider(first, "key-a", "flossware")
     router.add_provider(second, "key-b", "ncrr")
     asyncio.run(router.initialize())
