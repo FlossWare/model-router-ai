@@ -17,6 +17,8 @@ from model_router_ai.discovery import (
     ProviderDefinition,
     discover_accounts,
     discover_all_models,
+    discover_identities,
+    discover_identity,
     discover_models,
     provider_definitions,
 )
@@ -85,6 +87,8 @@ __all__ = [
     "classify_failure",
     "discover_accounts",
     "discover_all_models",
+    "discover_identities",
+    "discover_identity",
     "discover_models",
     "provider_definitions",
 ]
