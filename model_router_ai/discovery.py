@@ -112,7 +112,9 @@ PROVIDERS: tuple[ProviderDefinition, ...] = (
         "cohere",
         "COHERE_API_KEY",
         "https://api.cohere.com",
-        free_capable=True,
+        None,
+        None,
+        True,
     ),
     ProviderDefinition(
         "huggingface",
@@ -121,11 +123,18 @@ PROVIDERS: tuple[ProviderDefinition, ...] = (
         "HUGGINGFACE_API_KEY",
         "https://router.huggingface.co/v1",
         "https://router.huggingface.co/v1/models",
-        free_capable=True,
+        None,
+        True,
     ),
 )
 
-ROOT = Path(os.environ.get("FLOSSWARE_AI_ROOT", Path.home() / ".flossware" / "ai"))
+
+def _ai_root() -> Path:
+    override = os.environ.get("FLOSSWARE_AI_HOME") or os.environ.get("FLOSSWARE_AI_ROOT")
+    return Path(override).expanduser() if override else Path.home() / ".FlossWare" / "ai"
+
+
+ROOT = _ai_root()
 ACCOUNTS_FILE = Path(
     os.environ.get("FLOSSWARE_ACCOUNTS_FILE", ROOT / "config" / "accounts.toml")
 )
@@ -227,14 +236,12 @@ def _headers(provider: ProviderDefinition, key: str) -> dict[str, str]:
 
 def _request_json(url: str, headers: dict[str, str], timeout: float) -> Any:
     request = urllib.request.Request(url, headers=headers)
-    # URLs originate from the static PROVIDERS table, not user input.
     with urllib.request.urlopen(request, timeout=timeout) as response:  # nosec B310
         return json.load(response)
 
 
 def discover_identity(
-    account: str | dict[str, Any],
-    timeout: float = 8.0,
+    account: str | dict[str, Any], timeout: float = 8.0
 ) -> dict[str, Any]:
     item = _account(account)
     provider = _provider(item.provider)
@@ -278,8 +285,7 @@ def discover_identities(timeout: float = 8.0) -> list[dict[str, Any]]:
 
 
 def discover_models(
-    account: str | dict[str, Any],
-    timeout: float = 8.0,
+    account: str | dict[str, Any], timeout: float = 8.0
 ) -> list[dict[str, Any]]:
     item = _account(account)
     provider = _provider(item.provider)
